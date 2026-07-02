@@ -1,0 +1,88 @@
+{
+  "name": "ClickMarket → Supabase sync",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "a1a1a1a1-0001-4000-8000-000000000001",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-640, 0]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cfg-1",
+              "name": "clickmarket_email",
+              "value": "COLLEZ_VOTRE_EMAIL_CLICKMARKET_ICI",
+              "type": "string"
+            },
+            {
+              "id": "cfg-2",
+              "name": "clickmarket_password",
+              "value": "COLLEZ_VOTRE_MOT_DE_PASSE_CLICKMARKET_ICI",
+              "type": "string"
+            },
+            {
+              "id": "cfg-3",
+              "name": "supabase_url",
+              "value": "https://VOTRE-PROJET.supabase.co",
+              "type": "string"
+            },
+            {
+              "id": "cfg-4",
+              "name": "supabase_service_role_key",
+              "value": "COLLEZ_VOTRE_SUPABASE_SERVICE_ROLE_KEY_ICI",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "a1a1a1a1-0002-4000-8000-000000000002",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-400, 0],
+      "notes": "Ouvrez ce nœud dans n8n après import et remplacez les 4 valeurs par les vraies (email/mot de passe ClickMarket, URL Supabase, clé service_role). Ne fonctionne pas via 'Settings → Variables' (fonctionnalité pas disponible sur toutes les éditions n8n) — ceci marche sur n'importe quelle installation."
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $input.item.json;\n\nconst CM_BASE = \"https://clickmarket-backend-8scjo.ondigitalocean.app/api\";\nconst SUPABASE_URL = cfg.supabase_url;\nconst SUPABASE_SERVICE_ROLE_KEY = cfg.supabase_service_role_key;\nconst PER_PAGE = 100;\nconst UPSERT_BATCH_SIZE = 500;\n\n// ─── 1. Login — le token Bearer de ClickMarket n'est pas fiable dans la\n// durée, on se reconnecte donc à chaque exécution du workflow.\nconst loginRes = await this.helpers.httpRequest({\n  method: \"POST\",\n  url: `${CM_BASE}/login`,\n  headers: { \"Content-Type\": \"application/json\", Accept: \"application/json\" },\n  body: {\n    email: cfg.clickmarket_email,\n    password: cfg.clickmarket_password,\n  },\n  json: true,\n});\n\nconst token = loginRes.token;\nif (!token) {\n  throw new Error(\"ClickMarket login: aucun token reçu — vérifiez l'email/mot de passe dans le nœud 'Config'.\");\n}\n\n// La réponse de /login contient déjà les marchés accessibles au compte :\n// countries: [{ id, name, currency }, ...] — pas besoin de les coder en dur.\nconst countries = loginRes.countries || [];\n\n// ─── 2. Pour chaque marché, paginer jusqu'à la dernière page ───────────────\nconst allRows = [];\n\nfor (const country of countries) {\n  let page = 1;\n  let lastPage = 1;\n\n  do {\n    const res = await this.helpers.httpRequest({\n      method: \"GET\",\n      url: `${CM_BASE}/orders-paginated`,\n      qs: { per_page: PER_PAGE, page },\n      headers: {\n        Authorization: `Bearer ${token}`,\n        Accept: \"application/json\",\n        \"X-Selected-Country\": JSON.stringify({\n          id: country.id,\n          name: country.name,\n          currency: country.currency,\n        }),\n      },\n      json: true,\n    });\n\n    lastPage = res.pagination?.last_page ?? 1;\n\n    for (const o of res.orders || []) {\n      const firstItem =\n        Array.isArray(o.order_items) && o.order_items.length > 0\n          ? o.order_items[0]\n          : null;\n      const productName = firstItem?.product?.name ?? null;\n\n      const agent = o.confirmation_agent;\n      const agentName = agent\n        ? [agent.first_name, agent.last_name].filter(Boolean).join(\" \")\n        : null;\n\n      allRows.push({\n        order_id: o.order_id,\n        internal_id: o.id,\n        country_id: o.country_id,\n        country_name: o.country?.name ?? country.name,\n        customer_name: o.customer_name,\n        customer_city: o.customer_city,\n        total_price: o.total_price,\n        quantity: o.quantity,\n        confirmation_status: o.confirmation_status?.name ?? null,\n        shipping_status: o.shipping_status?.name ?? null,\n        seller_payment_status: o.seller_payment_status,\n        product_name: productName,\n        confirmation_agent: agentName,\n        order_date: o.order_date ? o.order_date.slice(0, 10) : null,\n        order_created_at: o.created_at,\n        confirmed_at: o.confirmed_at,\n        delivered_at: o.delivered_at,\n      });\n    }\n\n    page += 1;\n  } while (page <= lastPage);\n}\n\n// ─── 3. Upsert en masse vers Supabase, par lots de 500 lignes ──────────────\nlet upserted = 0;\n\nfor (let i = 0; i < allRows.length; i += UPSERT_BATCH_SIZE) {\n  const batch = allRows.slice(i, i + UPSERT_BATCH_SIZE);\n\n  await this.helpers.httpRequest({\n    method: \"POST\",\n    url: `${SUPABASE_URL}/rest/v1/clickmarket_leads`,\n    headers: {\n      \"Content-Type\": \"application/json\",\n      apikey: SUPABASE_SERVICE_ROLE_KEY,\n      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,\n      Prefer: \"resolution=merge-duplicates,return=minimal\",\n    },\n    body: batch,\n    json: true,\n  });\n\n  upserted += batch.length;\n}\n\nreturn [\n  {\n    json: {\n      synced_orders: upserted,\n      markets: countries.map((c) => c.name),\n      finished_at: new Date().toISOString(),\n    },\n  },\n];"
+      },
+      "id": "a1a1a1a1-0003-4000-8000-000000000003",
+      "name": "Sync ClickMarket → Supabase",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-160, 0],
+      "notes": "Login, détection des marchés, pagination complète, mapping, et upsert Supabase par lots de 500 — lit ses identifiants depuis le nœud 'Config' juste avant."
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Config", "type": "main", "index": 0 }]]
+    },
+    "Config": {
+      "main": [[{ "node": "Sync ClickMarket → Supabase", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

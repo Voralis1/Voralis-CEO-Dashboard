@@ -240,3 +240,28 @@ export async function fetchMetaAdsByCountry(dateFrom?: string, dateTo?: string) 
   console.log("🔍 DEBUG fetchMetaAdsByCountry END - returning", allData.length, "rows");
   return allData as MetaAdsCountryRow[];
 }
+
+export interface ClickMarketKpiRow {
+  country_id: number;
+  country_name: string;
+  total_leads: number;
+  confirmes: number;
+  taux_confirmation: number | null;
+  livres: number;
+  taux_livraison: number | null;
+  ca_livre: number;
+}
+
+export async function fetchClickMarketKpis(dateFrom: string, dateTo: string) {
+  const { data, error } = await supabase.rpc("kpi_clickmarket_marche_periode", {
+    date_from: dateFrom,
+    date_to: dateTo,
+  });
+
+  if (error) {
+    console.error("Failed to fetch ClickMarket KPIs:", error.message);
+    throw error;
+  }
+
+  return (data ?? []) as ClickMarketKpiRow[];
+}
