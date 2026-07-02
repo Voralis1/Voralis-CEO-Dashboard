@@ -1,41 +1,17 @@
+"use client";
 import Topbar from "@/components/layout/Topbar";
 import { Section } from "@/components/ui";
-import { SHIPSEN_DATA, PartnerCountryData, fmtUSD } from "@/lib/data";
-import { fetchShipsenStats } from "@/lib/shipsen";
+import { SHIPSEN_DATA, fmtUSD } from "@/lib/data";
 
-async function getShipsenData(): Promise<{ data: PartnerCountryData[]; source: "live" | "mock" }> {
-  try {
-    const data = await fetchShipsenStats();
-    return { data, source: "live" };
-  } catch {
-    return { data: SHIPSEN_DATA, source: "mock" };
-  }
-}
-
-export default async function ShipsenPage() {
-  const { data, source } = await getShipsenData();
+export default function ShipsenPage() {
+  const data = SHIPSEN_DATA;
   const sorted = [...data].sort((a, b) => b.confirmedLeads - a.confirmedLeads);
 
   return (
     <div>
-      <Topbar
-        title="Shipsen"
-        subtitle={
-          source === "live"
-            ? "Commandes confirmées et revenus par pays · données live"
-            : "Commandes confirmées et revenus par pays · données de démonstration"
-        }
-      />
+      <Topbar title="Shipsen" subtitle="Commandes confirmées et revenus par pays" />
 
       <div className="px-6 py-5 space-y-5">
-        {source === "mock" && (
-          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-600">
-            Connexion Shipsen indisponible — données de démonstration affichées. Vérifiez{" "}
-            <code className="font-mono">SHIPSEN_API_KEY</code> /{" "}
-            <code className="font-mono">SHIPSEN_API_SECRET</code> dans votre <code className="font-mono">.env</code>.
-          </div>
-        )}
-
         <Section title="Performance Shipsen par pays">
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
