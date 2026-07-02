@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+@theme {
+  --color-navy-50: #e8edf5;
+  --color-navy-100: #c5d0e6;
+  --color-navy-200: #8fa5cc;
+  --color-navy-300: #5a7ab3;
+  --color-navy-400: #2e5499;
+  --color-navy-500: #0f2040;
+  --color-navy-600: #0b1a35;
+  --color-navy-700: #08132a;
+  --color-navy-800: #050d1f;
+  --color-navy-900: #030814;
+
+  --color-gold-50: #fdf6e0;
+  --color-gold-100: #fae8a8;
+  --color-gold-200: #f5d570;
+  --color-gold-300: #e8bc3a;
+  --color-gold-400: #c9a227;
+  --color-gold-500: #a8841c;
+  --color-gold-600: #876712;
+  --color-gold-700: #654d0a;
+  --color-gold-800: #443304;
+  --color-gold-900: #231a00;
+
+  --color-teal-50: #e1f5ee;
+  --color-teal-100: #9fe1cb;
+  --color-teal-200: #5dcaa5;
+  --color-teal-300: #2eb88a;
+  --color-teal-400: #1d9e75;
+  --color-teal-500: #128460;
+  --color-teal-600: #0f6e56;
+  --color-teal-700: #085041;
+  --color-teal-800: #04342c;
+  --color-teal-900: #021a16;
+
+  --color-sidebar-50: #eefaf1;
+  --color-sidebar-100: #d9f2df;
+  --color-sidebar-200: #b3e5c0;
+  --color-sidebar-300: #86d29d;
+  --color-sidebar-400: #4fb877;
+  --color-sidebar-500: #2f9e58;
+  --color-sidebar-600: #227e45;
+  --color-sidebar-700: #1b6337;
+}
+
+@layer base {
+  * { box-sizing: border-box; }
+  html { -webkit-font-smoothing: antialiased; font-size: 17px; }
+  body {
+    background: #ffffff;
+    color: #0f172a;
+    min-height: 100vh;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #334155 transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar { width: 4px; height: 4px; }
+  .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
+}
