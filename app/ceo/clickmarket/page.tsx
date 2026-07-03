@@ -28,19 +28,22 @@ export default function ClickMarketPage() {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
 
-    fetchClickMarketKpis(dateFrom, dateTo)
-      .then((data) => {
+    async function load() {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const data = await fetchClickMarketKpis(dateFrom, dateTo);
         if (!cancelled) setRows(data);
-      })
-      .catch((err) => {
+      } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Erreur inconnue");
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setLoading(false);
-      });
+      }
+    }
+
+    load();
 
     return () => {
       cancelled = true;

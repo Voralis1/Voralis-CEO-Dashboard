@@ -58,28 +58,6 @@ export function Badge({ children, variant, className }: BadgeProps) {
   );
 }
 
-// ─── DECISION PILL ────────────────────────────────────────────────────────
-
-const decisionStyles = {
-  scale: "bg-emerald-50 text-emerald-700 border border-emerald-300",
-  hold: "bg-amber-50 text-amber-700 border border-amber-300",
-  stop: "bg-red-50 text-red-700 border border-red-300",
-};
-
-const decisionLabels = {
-  scale: "⬆ Scaler",
-  hold: "→ Maintenir",
-  stop: "⬇ Arrêter",
-};
-
-export function DecisionPill({ decision }: { decision: "scale" | "hold" | "stop" }) {
-  return (
-    <span className={cn("inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium", decisionStyles[decision])}>
-      {decisionLabels[decision]}
-    </span>
-  );
-}
-
 // ─── SECTION ──────────────────────────────────────────────────────────────
 
 interface SectionProps {
@@ -118,19 +96,5 @@ export function ProgressBar({ value, max = 100, color = "#1d9e75", className }: 
     <div className={cn("h-1.5 bg-slate-200 rounded-full overflow-hidden", className)}>
       <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: color }} />
     </div>
-  );
-}
-
-// ─── STATUS DOT ───────────────────────────────────────────────────────────
-
-const statusDotColors = {
-  ok: "bg-emerald-400",
-  warning: "bg-amber-400",
-  error: "bg-red-400",
-};
-
-export function StatusDot({ status }: { status: "ok" | "warning" | "error" }) {
-  return (
-    <span className={cn("inline-block w-2 h-2 rounded-full", statusDotColors[status])} />
   );
 }

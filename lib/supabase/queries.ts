@@ -265,3 +265,53 @@ export async function fetchClickMarketKpis(dateFrom: string, dateTo: string) {
 
   return (data ?? []) as ClickMarketKpiRow[];
 }
+
+export interface ColiscodKpiRow {
+  country_id: number;
+  country_name: string;
+  total_leads: number;
+  confirmes: number;
+  taux_confirmation: number | null;
+  livres: number;
+  taux_livraison: number | null;
+  ca_livre: number;
+}
+
+export async function fetchColiscodKpis(dateFrom: string, dateTo: string) {
+  const { data, error } = await supabase.rpc("kpi_coliscod_marche_periode", {
+    date_from: dateFrom,
+    date_to: dateTo,
+  });
+
+  if (error) {
+    console.error("Failed to fetch Coliscod KPIs:", error.message);
+    throw error;
+  }
+
+  return (data ?? []) as ColiscodKpiRow[];
+}
+
+export interface AfricodCongoKpiRow {
+  country_id: number;
+  country_name: string;
+  total_leads: number;
+  confirmes: number;
+  taux_confirmation: number | null;
+  livres: number;
+  taux_livraison: number | null;
+  ca_livre: number;
+}
+
+export async function fetchAfricodCongoKpis(dateFrom: string, dateTo: string) {
+  const { data, error } = await supabase.rpc("kpi_africod_congo_marche_periode", {
+    date_from: dateFrom,
+    date_to: dateTo,
+  });
+
+  if (error) {
+    console.error("Failed to fetch Africod Congo KPIs:", error.message);
+    throw error;
+  }
+
+  return (data ?? []) as AfricodCongoKpiRow[];
+}

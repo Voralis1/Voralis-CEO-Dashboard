@@ -1,54 +1,132 @@
 "use client";
+import { useEffect, useState } from "react";
 import Topbar from "@/components/layout/Topbar";
-import { Section, KpiCard, ProgressBar } from "@/components/ui";
-import CashFlowChart from "@/components/charts/CashFlowChart";
+import { Section, KpiCard } from "@/components/ui";
 import SpendChart from "@/components/charts/SpendChart";
-import ProjectionChart from "@/components/charts/ProjectionChart";
-import { MARKETS, fmtUSD, calcNetMargin } from "@/lib/data";
+import { useFilters } from "@/lib/filters";
+import { fetchNetworkOverview, fmtCurrency, type NetworkOverview } from "@/lib/dashboardData";
+import { fmtUSD } from "@/lib/data";
 import {
   ArrowDownCircle, ArrowUpCircle, DollarSign,
-  TrendingUp, Users, ShoppingBag, Truck, RotateCcw,
-  Clock, Flame
+  TrendingUp, Users, Truck, AlertTriangle, Loader2,
 } from "lucide-react";
 
+const COUNTRY_FLAGS: Record<string, string> = {
+  Angola: "🇦🇴", Maroc: "🇲🇦", Sénégal: "🇸🇳", "Côte d'Ivoire": "🇨🇮", Mali: "🇲🇱",
+  Gabon: "🇬🇦", Guinée: "🇬🇳", "Congo-Brazza": "🇨🇬", Congo: "🇨🇬", Senegal: "🇸🇳",
+  "Cote d'Ivoire": "🇨🇮", Guinea: "🇬🇳",
+};
+
+const SPEND_COLORS = ["#378add", "#1d9e75", "#c9a227", "#ef9f27", "#888780", "#e24b4a"];
+
 export default function TresoreriePage() {
-  const mkts = MARKETS;
+  const { dateFrom, dateTo } = useFilters();
+  const [overview, setOverview] = useState<NetworkOverview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const totalIn = mkts.reduce((a, m) => a + m.rev, 0);
-  const totalOut = mkts.reduce((a, m) => a + (m.adSpend + m.cogs + m.callCenter + m.logistics), 0);
-  const net = totalIn - totalOut;
+  useEffect(() => {
+    let cancelled = false;
 
-  const avgCPL = (mkts.reduce((a, m) => a + m.cpl, 0) / mkts.length).toFixed(2);
-  const avgDeliv = Math.round(mkts.reduce((a, m) => a + m.delivRate, 0) / mkts.length);
-  const totalRev = mkts.reduce((a, m) => a + m.rev, 0);
-  const totalSpend = mkts.reduce((a, m) => a + m.adSpend, 0);
-  const roas = (totalRev / totalSpend).toFixed(1);
-  const avgRTO = Math.round(mkts.reduce((a, m) => a + m.rto, 0) / mkts.length);
-  const totalLeads = Math.round(totalSpend / parseFloat(avgCPL));
-  const totalNet = mkts.reduce((a, m) => a + calcNetMargin(m), 0);
+    async function load() {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const data = await fetchNetworkOverview(dateFrom, dateTo);
+        if (!cancelled) setOverview(data);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Erreur inconnue");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [dateFrom, dateTo]);
+
+  if (error) {
+    return (
+      <div>
+        <Topbar title="Trésorerie" subtitle="Combien rentre, combien sort — par réseau et par pays" />
+        <div className="px-6 py-5">
+          <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm">
+            <AlertTriangle size={14} />
+            {error}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading || !overview) {
+    return (
+      <div>
+        <Topbar title="Trésorerie" subtitle="Combien rentre, combien sort — par réseau et par pays" />
+        <div className="px-6 flex items-center justify-center py-16 text-slate-400 gap-2">
+          <Loader2 size={16} className="animate-spin" />
+          <span className="text-sm">Chargement des données…</span>
+        </div>
+      </div>
+    );
+  }
+
+  const networkRows = overview.networks.flatMap((net) =>
+    net.rows.map((row) => ({ network: net.network, currency: net.currency, ...row }))
+  );
+
+  const totalMetaSpend = overview.metaAds.reduce((s, r) => s + (r.spend ?? 0), 0);
+  const totalMetaLeads = overview.metaAds.reduce((s, r) => s + (r.leads ?? 0), 0);
+  const avgCpl = totalMetaLeads > 0 ? totalMetaSpend / totalMetaLeads : 0;
+
+  const totalOrders =
+    networkRows.reduce((s, r) => s + r.total_leads, 0) + (overview.shipsen.global?.total_orders_all ?? 0);
+  const totalConfirmed =
+    networkRows.reduce((s, r) => s + r.confirmes, 0) + (overview.shipsen.global?.total_confirmed_orders ?? 0);
+  const globalConfirmationRate = totalOrders > 0 ? Math.round((totalConfirmed / totalOrders) * 1000) / 10 : 0;
+
+  const rowsWithDeliveryRate = networkRows.filter((r) => r.taux_livraison != null);
+  const avgDeliveryRate =
+    rowsWithDeliveryRate.length > 0
+      ? Math.round(rowsWithDeliveryRate.reduce((s, r) => s + (r.taux_livraison ?? 0), 0) / rowsWithDeliveryRate.length)
+      : 0;
+
+  const spendByCountryMap = new Map<string, number>();
+  for (const row of overview.metaAds) {
+    spendByCountryMap.set(row.country, (spendByCountryMap.get(row.country) ?? 0) + row.spend);
+  }
+  const spendByCountry = [...spendByCountryMap.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, value], i) => ({ name, value, color: SPEND_COLORS[i % SPEND_COLORS.length] }));
+
+  // Revenus confirmés par réseau, groupés par pays — jamais additionnés entre devises différentes.
+  const revenueRows = [
+    ...networkRows.map((r) => ({ network: r.network, country: r.country_name, currency: r.currency, revenue: r.ca_livre })),
+    ...overview.shipsen.byCountry.map((r) => ({ network: "Shipsen", country: r.country, currency: r.currency, revenue: r.revenue_confirmed })),
+  ].sort((a, b) => b.revenue - a.revenue);
 
   return (
     <div>
       <Topbar
         title="Trésorerie"
-        subtitle="Combien rentre, combien sort, combien reste — aujourd'hui"
+        subtitle="Combien rentre, combien sort — par réseau et par pays (devises non additionnées)"
       />
 
       <div className="px-6 py-5 space-y-5">
-
         {/* Cash hero */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 gap-4">
           <div className="rounded-xl p-5 border" style={{ background: "#ecfdf5", borderColor: "#1d9e75" }}>
             <div className="flex items-center gap-2 mb-3">
               <ArrowDownCircle size={16} className="text-emerald-600" />
               <span className="text-xs font-semibold text-emerald-600 uppercase tracking-wide">Cash IN</span>
             </div>
-            <p className="text-3xl font-semibold text-emerald-700">{fmtUSD(totalIn)}</p>
-            <p className="text-xs text-emerald-600 mt-1.5">Encaissements COD effectifs</p>
-            <div className="mt-3 flex items-center gap-1 text-xs text-emerald-600">
-              <TrendingUp size={11} />
-              <span>+18% vs semaine précédente</span>
-            </div>
+            <p className="text-2xl font-semibold text-emerald-700">{totalConfirmed.toLocaleString("fr-FR")} commandes confirmées</p>
+            <p className="text-xs text-emerald-600 mt-1.5">
+              Revenus par réseau/pays ci-dessous — chaque devise reste séparée, jamais additionnée.
+            </p>
           </div>
 
           <div className="rounded-xl p-5 border" style={{ background: "#fef2f2", borderColor: "#e24b4a" }}>
@@ -56,153 +134,85 @@ export default function TresoreriePage() {
               <ArrowUpCircle size={16} className="text-red-600" />
               <span className="text-xs font-semibold text-red-600 uppercase tracking-wide">Cash OUT</span>
             </div>
-            <p className="text-3xl font-semibold text-red-700">{fmtUSD(totalOut)}</p>
-            <p className="text-xs text-red-600 mt-1.5">Ads + COGS + logistique + CC</p>
-            <div className="mt-3 flex items-center gap-1 text-xs text-red-600">
-              <Flame size={11} />
-              <span>Burn ads/jour · {fmtUSD(mkts.reduce((a, m) => a + m.adSpend, 0) / 30)}</span>
-            </div>
-          </div>
-
-          <div className="rounded-xl p-5 border" style={{ background: "#eff6ff", borderColor: "#378add" }}>
-            <div className="flex items-center gap-2 mb-3">
-              <DollarSign size={16} className="text-blue-600" />
-              <span className="text-xs font-semibold text-blue-600 uppercase tracking-wide">Cash Net</span>
-            </div>
-            <p className="text-3xl font-semibold" style={{ color: net >= 0 ? "#2563eb" : "#dc2626" }}>
-              {fmtUSD(net)}
-            </p>
-            <p className="text-xs text-blue-700 mt-1.5">Marge nette après tous les coûts</p>
-            <div className="mt-3 flex items-center gap-1 text-xs text-blue-600">
-              <Clock size={11} />
-              <span>Runway estimé · 47 jours</span>
-            </div>
+            <p className="text-3xl font-semibold text-red-700">{fmtUSD(totalMetaSpend)}</p>
+            <p className="text-xs text-red-600 mt-1.5">Dépense publicitaire Meta Ads (seul coût réel suivi actuellement)</p>
           </div>
         </div>
 
         {/* Charts row */}
         <div className="grid grid-cols-2 gap-4">
-          <Section title="Cash IN / OUT · 7 derniers jours">
-            <CashFlowChart />
-            <div className="flex items-center gap-4 mt-2">
-              {[
-                { color: "#1d9e75", label: "Cash IN" },
-                { color: "#e24b4a", label: "Cash OUT" },
-                { color: "#c9a227", label: "Net" },
-              ].map(({ color, label }) => (
-                <div key={label} className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-sm" style={{ background: color }} />
-                  <span className="text-[10px] text-slate-500">{label}</span>
-                </div>
-              ))}
+          <Section title="Revenus confirmés par réseau et par pays">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200">
+                    {["Réseau", "Pays", "Revenus confirmés"].map((h) => (
+                      <th key={h} className="text-left px-3 py-2 text-slate-500 font-medium whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {revenueRows.map((r) => (
+                    <tr key={`${r.network}-${r.country}`} className="border-b border-slate-100">
+                      <td className="px-3 py-2 text-slate-700">{r.network}</td>
+                      <td className="px-3 py-2">
+                        <span className="flex items-center gap-2 font-medium text-slate-900">
+                          <span className="text-base">{COUNTRY_FLAGS[r.country] ?? "🌍"}</span>
+                          {r.country}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-slate-700">{fmtCurrency(r.revenue, r.currency)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </Section>
 
-          <Section title="Répartition Cash OUT">
-            <SpendChart />
+          <Section title="Dépense Meta Ads par pays">
+            {spendByCountry.length > 0 ? (
+              <>
+                <SpendChart data={spendByCountry} />
+                <div className="flex flex-wrap items-center gap-3 mt-2">
+                  {spendByCountry.map(({ name, color }) => (
+                    <div key={name} className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-sm" style={{ background: color }} />
+                      <span className="text-[10px] text-slate-500">{name}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-slate-500">Aucune donnée Meta Ads pour cette période.</p>
+            )}
           </Section>
         </div>
 
         {/* KPIs strip */}
         <Section title="KPIs clés">
-          <div className="grid grid-cols-6 gap-3">
+          <div className="grid grid-cols-4 gap-3">
             <KpiCard
-              label="Leads"
-              value={totalLeads.toLocaleString()}
-              delta="↑ +12% vs préc."
-              deltaUp
+              label="Commandes confirmées"
+              value={totalConfirmed.toLocaleString("fr-FR")}
               icon={<Users size={14} />}
             />
             <KpiCard
-              label="CPL moyen"
-              value={`$${avgCPL}`}
-              delta="↓ −8% vs préc."
-              deltaUp
+              label="CPL moyen (Meta Ads)"
+              value={`$${avgCpl.toFixed(2)}`}
               icon={<DollarSign size={14} />}
             />
             <KpiCard
-              label="Delivery rate"
-              value={`${avgDeliv}%`}
-              delta={avgDeliv >= 65 ? "Dans les seuils" : "⚠ Seuil ≥65%"}
-              deltaUp={avgDeliv >= 65}
-              icon={<Truck size={14} />}
-            />
-            <KpiCard
-              label="ROAS net"
-              value={`${roas}×`}
-              delta="↑ +0.4× vs préc."
-              deltaUp
+              label="Taux confirmation global"
+              value={`${globalConfirmationRate}%`}
               icon={<TrendingUp size={14} />}
             />
             <KpiCard
-              label="RTO moyen"
-              value={`${avgRTO}%`}
-              delta={avgRTO <= 12 ? "Dans les seuils" : "⚠ Au-dessus seuil"}
-              deltaUp={avgRTO <= 12}
-              icon={<RotateCcw size={14} />}
-            />
-            <KpiCard
-              label="AOV moyen"
-              value="$38"
-              delta="↑ +5% vs préc."
-              deltaUp
-              icon={<ShoppingBag size={14} />}
+              label="Taux livraison moyen"
+              value={`${avgDeliveryRate}%`}
+              icon={<Truck size={14} />}
             />
           </div>
         </Section>
-
-        {/* Runway */}
-        <div className="grid grid-cols-3 gap-4">
-          <Section className="col-span-2" title="Projection cashflow · 14 prochains jours">
-            <ProjectionChart />
-            <div className="flex items-center gap-4 mt-2">
-              {[
-                { color: "#1d9e75", label: "Cash IN projeté", dash: false },
-                { color: "#e24b4a", label: "Burn projeté", dash: true },
-              ].map(({ color, label, dash }) => (
-                <div key={label} className="flex items-center gap-1.5">
-                  <span className="w-4 h-0.5" style={{ background: color, borderTop: dash ? "1px dashed" : "none" }} />
-                  <span className="text-[10px] text-slate-500">{label}</span>
-                </div>
-              ))}
-            </div>
-          </Section>
-
-          <Section title="Indicateurs de survie">
-            <div className="space-y-4">
-              <div>
-                <div className="flex justify-between items-center mb-1.5">
-                  <span className="text-xs text-slate-500">Runway</span>
-                  <span className="text-sm font-semibold text-blue-600">47 jours</span>
-                </div>
-                <ProgressBar value={47} max={90} color="#378add" />
-                <p className="text-[10px] text-slate-400 mt-1">Alerte si ≤ 30 jours</p>
-              </div>
-              <div className="pt-1 border-t border-slate-200">
-                <div className="flex justify-between py-1.5">
-                  <span className="text-xs text-slate-500">Trésorerie dispo</span>
-                  <span className="text-xs font-medium text-slate-900">$12,450</span>
-                </div>
-                <div className="flex justify-between py-1.5">
-                  <span className="text-xs text-slate-500">Burn ads/jour</span>
-                  <span className="text-xs font-medium text-red-600">$265</span>
-                </div>
-                <div className="flex justify-between py-1.5">
-                  <span className="text-xs text-slate-500">Engagements 14j</span>
-                  <span className="text-xs font-medium text-amber-600">$3,710</span>
-                </div>
-                <div className="flex justify-between py-1.5">
-                  <span className="text-xs text-slate-500">Pipeline non encaissé</span>
-                  <span className="text-xs font-medium text-emerald-600">$8,240</span>
-                </div>
-                <div className="flex justify-between py-1.5 border-t border-slate-200 mt-1">
-                  <span className="text-xs text-slate-500">Marge nette période</span>
-                  <span className="text-xs font-semibold text-slate-900">{fmtUSD(totalNet)}</span>
-                </div>
-              </div>
-            </div>
-          </Section>
-        </div>
       </div>
     </div>
   );

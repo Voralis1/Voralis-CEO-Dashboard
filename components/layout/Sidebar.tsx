@@ -1,4 +1,5 @@
 "use client";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -16,9 +17,7 @@ import {
   Map,
   LogOut,
 } from "lucide-react";
-import { ALERTS } from "@/lib/data";
-
-const activeAlerts = ALERTS.filter((a) => !a.snoozed).length;
+import { fetchNetworkOverview, computeAlerts } from "@/lib/dashboardData";
 
 const NAV = [
   { href: "/ceo",               label: "Trésorerie", icon: LayoutDashboard, exact: true },
@@ -29,7 +28,7 @@ const NAV = [
   { href: "/ceo/coliscod",      label: "Coliscod Angola", icon: Map },
   { href: "/ceo/clickmarket",   label: "ClickMarket", icon: Zap },
   { href: "/ceo/crm-voralis",   label: "CRM Voralis", icon: Share2 },
-  { href: "/ceo/alerts",        label: "Alertes",    icon: Bell, badge: activeAlerts },
+  { href: "/ceo/alerts",        label: "Alertes",    icon: Bell },
   { href: "/ceo/team",          label: "Équipe",     icon: Users },
   { href: "/ceo/connections",   label: "Sources",    icon: Plug },
 ];
@@ -37,6 +36,28 @@ const NAV = [
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
+  const [activeAlerts, setActiveAlerts] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const today = new Date().toISOString().split("T")[0];
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+
+    fetchNetworkOverview(thirtyDaysAgo, today)
+      .then((overview) => {
+        if (!cancelled) {
+          const alerts = computeAlerts(overview);
+          setActiveAlerts(alerts.filter((a) => a.level !== "info").length);
+        }
+      })
+      .catch(() => {
+        // Badge silencieux en cas d'échec — la page Alertes affichera l'erreur en détail.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleLogout() {
     await supabase.auth.signOut();
@@ -62,8 +83,9 @@ export default function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto scrollbar-thin">
-        {NAV.map(({ href, label, icon: Icon, badge, exact }) => {
+        {NAV.map(({ href, label, icon: Icon, exact }) => {
           const active = exact ? pathname === href : pathname.startsWith(href);
+          const badge = href === "/ceo/alerts" ? activeAlerts : 0;
           return (
             <Link
               key={href}

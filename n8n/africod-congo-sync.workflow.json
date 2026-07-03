@@ -1,0 +1,88 @@
+{
+  "name": "Africod Congo (AfriqueCOD) → Supabase sync",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "d4d4d4d4-0001-4000-8000-000000000001",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-640, 0]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cfg-1",
+              "name": "africod_congo_email",
+              "value": "COLLEZ_L_EMAIL_AFRICOD_CONGO_ICI",
+              "type": "string"
+            },
+            {
+              "id": "cfg-2",
+              "name": "africod_congo_password",
+              "value": "COLLEZ_LE_MOT_DE_PASSE_ICI",
+              "type": "string"
+            },
+            {
+              "id": "cfg-3",
+              "name": "supabase_url",
+              "value": "https://VOTRE-PROJET.supabase.co",
+              "type": "string"
+            },
+            {
+              "id": "cfg-4",
+              "name": "supabase_service_role_key",
+              "value": "COLLEZ_VOTRE_SUPABASE_SERVICE_ROLE_KEY_ICI",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "d4d4d4d4-0002-4000-8000-000000000002",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-400, 0],
+      "notes": "Compte AfriqueCOD (api.afriquecod.com) séparé de Coliscod Angola (marché Congo, id 17, devise XAF). Ne mettez jamais le vrai mot de passe dans une copie de ce fichier suivie par git — seulement dans le nœud, une fois importé dans votre instance n8n."
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $input.item.json;\n\n// Attention à l'orthographe : \"afriquecod\" (français), pas \"africacod\" — confirmé par une\n// requête réseau réelle capturée depuis manager.afriquecod.com.\nconst BASE = \"https://api.afriquecod.com/api\";\nconst ORIGIN = \"https://manager.afriquecod.com\";\nconst SUPABASE_URL = cfg.supabase_url;\nconst SUPABASE_SERVICE_ROLE_KEY = cfg.supabase_service_role_key;\nconst PER_PAGE = 100;\nconst UPSERT_BATCH_SIZE = 500;\nconst PAGE_DELAY_MS = 400; // petite pause entre pages pour rester sous la limite Cloudflare (~120 req)\n\n// L'API est derrière Cloudflare : un User-Agent \"nu\" (client HTTP par défaut) se fait\n// bloquer plus facilement qu'un User-Agent de navigateur.\nconst USER_AGENT =\n  \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36\";\n\n// Marché Congo sur le compte AfriqueCOD dédié (distinct du compte Coliscod Angola).\n// Objet complet capturé depuis une requête réseau réelle — envoyé tel quel, sans\n// supposer quels champs le backend valide ou non.\nconst COUNTRIES = [\n  {\n    id: 17,\n    old_id: \"65dfdf15de9227002ef02de4\",\n    name: \"Congo\",\n    currency: \"XAF\",\n    currency_exchange_rate: 1,\n    flag: \"CG\",\n    phone_code: null,\n    timezone: \"Africa/Brazzaville\",\n    created_at: \"2024-06-29T12:44:04.000000Z\",\n    updated_at: \"2024-06-29T12:44:04.000000Z\",\n    deleted_at: null,\n  },\n];\n\nfunction sleep(ms) {\n  return new Promise((resolve) => setTimeout(resolve, ms));\n}\n\nfunction bodyPreview(body) {\n  try {\n    return JSON.stringify(body).slice(0, 500);\n  } catch {\n    return String(body).slice(0, 500);\n  }\n}\n\n// Empreinte des champs qui peuvent changer sur une commande existante (statuts, montant,\n// dates de confirmation/livraison). Sert à détecter \"cette commande est identique à ce\n// qu'on a déjà en base\" sans dépendre d'un champ updated_at (l'API n'en expose pas).\nfunction fingerprint(row) {\n  return [\n    row.confirmation_status,\n    row.shipping_status,\n    row.seller_payment_status,\n    row.total_price,\n    row.confirmed_at,\n    row.delivered_at,\n  ].join(\"|\");\n}\n\n// Récupère les empreintes déjà connues pour ce pays, pour permettre un arrêt anticipé\n// de la pagination (voir plus bas). Si cette requête échoue, on continue quand même en\n// mode \"tout est inconnu\" : ça se contente de refaire un balayage complet, sans casser\n// la synchro.\nasync function fetchKnownFingerprints(countryId) {\n  try {\n    const res = await this.helpers.httpRequest({\n      method: \"GET\",\n      url: `${SUPABASE_URL}/rest/v1/africod_congo_leads`,\n      qs: {\n        country_id: `eq.${countryId}`,\n        select: \"order_id,confirmation_status,shipping_status,seller_payment_status,total_price,confirmed_at,delivered_at\",\n      },\n      headers: {\n        apikey: SUPABASE_SERVICE_ROLE_KEY,\n        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,\n      },\n      json: true,\n      returnFullResponse: true,\n      ignoreHttpStatusErrors: true,\n    });\n\n    if (res.statusCode < 200 || res.statusCode >= 300 || !Array.isArray(res.body)) {\n      return new Map();\n    }\n\n    return new Map(res.body.map((r) => [r.order_id, fingerprint(r)]));\n  } catch {\n    return new Map();\n  }\n}\n\nasync function africodLogin() {\n  const res = await this.helpers.httpRequest({\n    method: \"POST\",\n    url: `${BASE}/login`,\n    headers: {\n      \"Content-Type\": \"application/json\",\n      Accept: \"application/json\",\n      \"User-Agent\": USER_AGENT,\n      Origin: ORIGIN,\n      Referer: `${ORIGIN}/`,\n    },\n    body: { email: cfg.africod_congo_email, password: cfg.africod_congo_password },\n    json: true,\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true,\n  });\n\n  if (res.statusCode < 200 || res.statusCode >= 300) {\n    throw new Error(`POST /login → HTTP ${res.statusCode}: ${bodyPreview(res.body)}`);\n  }\n\n  const token = res.body && res.body.token;\n  if (!token) {\n    throw new Error(`POST /login → 200 mais pas de champ token: ${bodyPreview(res.body)}`);\n  }\n  return token;\n}\n\n// Retry avec backoff sur 403/429 (Cloudflare / rate limit) — jusqu'à 3 tentatives.\nasync function fetchOrdersPage(token, country, page) {\n  let attempt = 0;\n\n  while (true) {\n    const res = await this.helpers.httpRequest({\n      method: \"GET\",\n      url: `${BASE}/orders-paginated`,\n      qs: { per_page: PER_PAGE, page, orders_type: \"leads\" },\n      headers: {\n        Authorization: `Bearer ${token}`,\n        Accept: \"application/json\",\n        \"User-Agent\": USER_AGENT,\n        \"X-Selected-Country\": JSON.stringify(country),\n        Origin: ORIGIN,\n        Referer: `${ORIGIN}/`,\n      },\n      json: true,\n      returnFullResponse: true,\n      ignoreHttpStatusErrors: true,\n    });\n\n    if (res.statusCode === 403 || res.statusCode === 429) {\n      attempt += 1;\n      if (attempt > 3) {\n        throw new Error(`GET /orders-paginated (page ${page}) → HTTP ${res.statusCode} après 3 tentatives: ${bodyPreview(res.body)}`);\n      }\n      await sleep(1500 * attempt);\n      continue;\n    }\n\n    if (res.statusCode < 200 || res.statusCode >= 300) {\n      throw new Error(`GET /orders-paginated (page ${page}) → HTTP ${res.statusCode}: ${bodyPreview(res.body)}`);\n    }\n\n    return res.body;\n  }\n}\n\nconst allRows = [];\nconst errors = [];\nconst perCountry = [];\n\nif (!cfg.africod_congo_email || !cfg.africod_congo_password) {\n  errors.push({ country: \"ALL\", message: \"africod_congo_email / africod_congo_password manquants dans le nœud 'Config'.\" });\n} else {\n  let token = null;\n\n  // ─── 1. Login ──────────────────────────────────────────────────────────\n  try {\n    token = await africodLogin.call(this);\n  } catch (err) {\n    errors.push({ country: \"ALL\", message: `Login initial échoué — ${err.message}` });\n  }\n\n  // ─── 2. Pour chaque pays, paginer /orders-paginated jusqu'à la dernière page ───\n  if (token) {\n    for (const country of COUNTRIES) {\n      let fetched = 0;\n      let apiTotal = null;\n      let stoppedEarly = false;\n\n      const known = await fetchKnownFingerprints.call(this, country.id);\n\n      try {\n        let page = 1;\n        let lastPage = 1;\n\n        do {\n          const data = await fetchOrdersPage.call(this, token, country, page);\n          const pagination = data.pagination || {};\n          lastPage = pagination.last_page ?? 1;\n          if (apiTotal === null) apiTotal = pagination.total ?? null;\n\n          const pageRows = [];\n\n          for (const o of data.orders || []) {\n            const firstItem =\n              Array.isArray(o.order_items) && o.order_items.length > 0 ? o.order_items[0] : null;\n            const productName = firstItem?.product?.name ?? null;\n            const agentName = o.confirmation_agent?.username ?? null;\n\n            pageRows.push({\n              order_id: o.order_id,\n              internal_id: o.id,\n              country_id: country.id,\n              country_name: o.country?.name ?? country.name,\n              customer_name: o.customer_name ?? null,\n              customer_phone: o.customer_phone_1 ?? null,\n              customer_city: o.customer_city ?? null,\n              total_price: o.total_price ?? 0,\n              quantity: o.quantity ?? null,\n              confirmation_status: o.confirmation_status?.name ?? null,\n              shipping_status: o.shipping_status?.name ?? null,\n              seller_payment_status: o.seller_payment_status ?? null,\n              product_name: productName,\n              confirmation_agent: agentName,\n              order_date: o.order_date ? String(o.order_date).slice(0, 10) : null,\n              order_created_at: o.created_at ?? null,\n              confirmed_at: o.confirmed_at ?? null,\n              delivered_at: o.delivered_at ?? null,\n            });\n          }\n\n          allRows.push(...pageRows);\n          fetched += pageRows.length;\n\n          // Arrêt anticipé : si toute cette page est déjà connue et inchangée en base,\n          // on suppose (comme pour un flux \"les plus récents d'abord\") qu'il n'y a rien\n          // de neuf plus loin. Hypothèse non confirmée pour cette API — documentée dans\n          // les notes du nœud. Sans ça, chaque run reparcourt tout l'historique et finit\n          // par dépasser le timeout du Task Runner n8n sur un compte à fort volume.\n          const pageFullyKnown =\n            pageRows.length > 0 && pageRows.every((r) => known.get(r.order_id) === fingerprint(r));\n\n          if (pageFullyKnown) {\n            stoppedEarly = true;\n            break;\n          }\n\n          page += 1;\n          // Pause entre pages seulement s'il en reste — inutile d'attendre après la dernière.\n          if (page <= lastPage) await sleep(PAGE_DELAY_MS);\n        } while (page <= lastPage);\n      } catch (err) {\n        // Une erreur sur un pays ne doit pas empêcher les autres d'être synchronisés.\n        errors.push({ country: country.name, message: err.message });\n      }\n\n      // Visible même sans erreur HTTP : si apiTotal vaut 0 (ou fetched reste à 0 alors\n      // qu'apiTotal > 0), ça pointe vers un problème d'accès plutôt qu'un bug de code.\n      perCountry.push({ country: country.name, apiTotal, fetched, stoppedEarly });\n    }\n  }\n}\n\n// ─── 3. Upsert en masse vers Supabase, par lots de 500 lignes ─────────────\n// Chaque lot est tenté indépendamment : si l'un échoue, les suivants sont quand même envoyés.\nlet upserted = 0;\n\nfor (let i = 0; i < allRows.length; i += UPSERT_BATCH_SIZE) {\n  const batch = allRows.slice(i, i + UPSERT_BATCH_SIZE);\n\n  try {\n    const res = await this.helpers.httpRequest({\n      method: \"POST\",\n      url: `${SUPABASE_URL}/rest/v1/africod_congo_leads`,\n      headers: {\n        \"Content-Type\": \"application/json\",\n        apikey: SUPABASE_SERVICE_ROLE_KEY,\n        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,\n        Prefer: \"resolution=merge-duplicates,return=minimal\",\n      },\n      body: batch,\n      json: true,\n      returnFullResponse: true,\n      ignoreHttpStatusErrors: true,\n    });\n\n    if (res.statusCode < 200 || res.statusCode >= 300) {\n      throw new Error(`HTTP ${res.statusCode}: ${bodyPreview(res.body)}`);\n    }\n\n    upserted += batch.length;\n  } catch (err) {\n    errors.push({ country: \"SUPABASE_UPSERT\", message: `lot ${i}-${i + batch.length}: ${err.message}` });\n  }\n}\n\nreturn [\n  {\n    json: {\n      synced_orders: upserted,\n      countries: COUNTRIES.map((c) => c.name),\n      perCountry,\n      errors,\n      finished_at: new Date().toISOString(),\n    },\n  },\n];"
+      },
+      "id": "d4d4d4d4-0003-4000-8000-000000000003",
+      "name": "Sync Africod Congo → Supabase",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-160, 0],
+      "notes": "Login (POST /login, token à la racine du corps), puis pagine GET /orders-paginated pour le marché Congo (X-Selected-Country: {id:17,name:Congo,currency:XAF}) avec User-Agent navigateur + retry backoff sur 403/429 (Cloudflare). Synchro incrémentale : avant de paginer, on récupère les empreintes déjà connues en base pour ce pays, et on arrête la pagination dès qu'une page entière est déjà connue et inchangée (champ 'stoppedEarly' dans le résultat) — hypothèse que l'API renvoie les commandes les plus récentes/actives en premier, NON CONFIRMÉE pour cette API précise. La toute première synchro (base vide) fait donc forcément un balayage complet ; les runs suivants sont rapides. Aplatit chaque commande sur les colonnes de africod_congo_leads et upsert vers Supabase par lots de 500, chacun isolé dans son propre try/catch. Erreurs poussées dans 'errors' plutôt que de faire planter tout le nœud."
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Config", "type": "main", "index": 0 }]]
+    },
+    "Config": {
+      "main": [[{ "node": "Sync Africod Congo → Supabase", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

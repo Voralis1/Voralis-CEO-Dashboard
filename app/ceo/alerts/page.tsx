@@ -1,9 +1,10 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Topbar from "@/components/layout/Topbar";
 import { Section, Badge } from "@/components/ui";
-import { ALERTS, type Alert, type AlertLevel } from "@/lib/data";
-import { AlertTriangle, Info, Bell, CheckCircle, Clock } from "lucide-react";
+import { useFilters } from "@/lib/filters";
+import { fetchNetworkOverview, computeAlerts, type Alert, type AlertLevel } from "@/lib/dashboardData";
+import { AlertTriangle, Info, Bell, CheckCircle, Clock, Loader2 } from "lucide-react";
 
 const levelConfig: Record<AlertLevel, { icon: React.ElementType; color: string; border: string; bg: string; label: string }> = {
   critical: { icon: AlertTriangle, color: "text-red-600", border: "border-l-red-500", bg: "bg-red-50", label: "Critique" },
@@ -11,7 +12,7 @@ const levelConfig: Record<AlertLevel, { icon: React.ElementType; color: string; 
   info: { icon: Info, color: "text-blue-600", border: "border-l-blue-500", bg: "bg-blue-50", label: "Info" },
 };
 
-function AlertCard({ alert, onSnooze, onAck }: { alert: Alert; onSnooze: (id: string) => void; onAck: (id: string) => void }) {
+function AlertCard({ alert, onSnooze }: { alert: Alert; onSnooze: (id: string) => void }) {
   const cfg = levelConfig[alert.level];
   const Icon = cfg.icon;
 
@@ -34,18 +35,14 @@ function AlertCard({ alert, onSnooze, onAck }: { alert: Alert; onSnooze: (id: st
         </div>
         <p className="text-xs text-slate-500 mb-3">{alert.desc}</p>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => onAck(alert.id)}
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 hover:border-slate-400 hover:text-slate-900 transition-all"
-          >
-            <CheckCircle size={11} />
+          <span className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700">
             {alert.action}
-          </button>
+          </span>
           <button
             onClick={() => onSnooze(alert.id)}
             className="text-xs px-3 py-1.5 text-slate-500 hover:text-slate-700 transition-colors"
           >
-            Snoozer 24h
+            Masquer cette session
           </button>
         </div>
       </div>
@@ -54,13 +51,45 @@ function AlertCard({ alert, onSnooze, onAck }: { alert: Alert; onSnooze: (id: st
 }
 
 export default function AlertsPage() {
-  const [alerts, setAlerts] = useState<Alert[]>(ALERTS);
+  const { dateFrom, dateTo } = useFilters();
+  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [snoozedIds, setSnoozedIds] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const active = alerts.filter((a) => !a.snoozed);
-  const snoozed = alerts.filter((a) => a.snoozed);
+  useEffect(() => {
+    let cancelled = false;
 
-  const snooze = (id: string) => setAlerts((prev) => prev.map((a) => a.id === id ? { ...a, snoozed: true } : a));
-  const ack = (id: string) => setAlerts((prev) => prev.filter((a) => a.id !== id));
+    async function load() {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const overview = await fetchNetworkOverview(dateFrom, dateTo);
+        if (!cancelled) setAlerts(computeAlerts(overview));
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Erreur inconnue");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [dateFrom, dateTo]);
+
+  const active = alerts.filter((a) => !snoozedIds.has(a.id));
+  const snoozed = alerts.filter((a) => snoozedIds.has(a.id));
+
+  const snooze = (id: string) => setSnoozedIds((prev) => new Set(prev).add(id));
+  const unsnooze = (id: string) =>
+    setSnoozedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
 
   const critical = active.filter((a) => a.level === "critical");
   const warnings = active.filter((a) => a.level === "warning");
@@ -68,109 +97,114 @@ export default function AlertsPage() {
 
   return (
     <div>
-      <Topbar title="Centre d'alertes" subtitle="Détection automatique des blocages dans le funnel" />
+      <Topbar title="Centre d'alertes" subtitle="Calculées en direct à partir des seuils sur les vraies métriques réseau" />
 
       <div className="px-6 py-5 space-y-5">
-
-        {/* Summary */}
-        <div className="grid grid-cols-3 gap-4">
-          {[
-            { label: "Critiques", count: critical.length, color: "text-red-600", bg: "bg-red-50 border-red-200" },
-            { label: "Avertissements", count: warnings.length, color: "text-amber-600", bg: "bg-amber-50 border-amber-200" },
-            { label: "Informations", count: info.length, color: "text-blue-600", bg: "bg-blue-50 border-blue-200" },
-          ].map(({ label, count, color, bg }) => (
-            <div key={label} className={`rounded-xl p-4 border ${bg}`}>
-              <p className={`text-2xl font-semibold ${color}`}>{count}</p>
-              <p className="text-xs text-slate-500 mt-1">{label} actives</p>
-            </div>
-          ))}
-        </div>
-
-        {/* Active alerts */}
-        {active.length > 0 ? (
-          <Section title={`Alertes actives (${active.length})`}>
-            <div className="space-y-3">
-              {[...critical, ...warnings, ...info].map((alert) => (
-                <AlertCard key={alert.id} alert={alert} onSnooze={snooze} onAck={ack} />
-              ))}
-            </div>
-          </Section>
-        ) : (
-          <Section>
-            <div className="flex flex-col items-center justify-center py-10 text-center">
-              <CheckCircle size={32} className="text-emerald-500 mb-3" />
-              <p className="text-sm font-medium text-slate-900 mb-1">Aucune alerte active</p>
-              <p className="text-xs text-slate-500">Toutes les métriques sont dans les seuils définis.</p>
-            </div>
-          </Section>
+        {error && (
+          <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm">
+            <AlertTriangle size={14} />
+            {error}
+          </div>
         )}
 
-        {/* Snoozed */}
-        {snoozed.length > 0 && (
-          <Section title={`Alertes snoozées (${snoozed.length})`}>
-            <div className="space-y-2">
-              {snoozed.map((alert) => (
-                <div key={alert.id} className="flex items-center gap-3 p-3 rounded-lg bg-slate-100 opacity-70">
-                  <Bell size={14} className="text-slate-500" />
-                  <span className="text-xs text-slate-500 flex-1">{alert.title}</span>
-                  <button
-                    onClick={() => setAlerts((prev) => prev.map((a) => a.id === alert.id ? { ...a, snoozed: false } : a))}
-                    className="text-xs text-slate-500 hover:text-slate-700"
-                  >
-                    Réactiver
-                  </button>
+        {loading && alerts.length === 0 && !error ? (
+          <div className="flex items-center justify-center py-16 text-slate-400 gap-2">
+            <Loader2 size={16} className="animate-spin" />
+            <span className="text-sm">Calcul des alertes…</span>
+          </div>
+        ) : (
+          <>
+            {/* Summary */}
+            <div className="grid grid-cols-3 gap-4">
+              {[
+                { label: "Critiques", count: critical.length, color: "text-red-600", bg: "bg-red-50 border-red-200" },
+                { label: "Avertissements", count: warnings.length, color: "text-amber-600", bg: "bg-amber-50 border-amber-200" },
+                { label: "Informations", count: info.length, color: "text-blue-600", bg: "bg-blue-50 border-blue-200" },
+              ].map(({ label, count, color, bg }) => (
+                <div key={label} className={`rounded-xl p-4 border ${bg}`}>
+                  <p className={`text-2xl font-semibold ${color}`}>{count}</p>
+                  <p className="text-xs text-slate-500 mt-1">{label} actives</p>
                 </div>
               ))}
             </div>
-          </Section>
+
+            {/* Active alerts */}
+            {active.length > 0 ? (
+              <Section title={`Alertes actives (${active.length})`}>
+                <div className="space-y-3">
+                  {[...critical, ...warnings, ...info].map((alert) => (
+                    <AlertCard key={alert.id} alert={alert} onSnooze={snooze} />
+                  ))}
+                </div>
+              </Section>
+            ) : (
+              <Section>
+                <div className="flex flex-col items-center justify-center py-10 text-center">
+                  <CheckCircle size={32} className="text-emerald-500 mb-3" />
+                  <p className="text-sm font-medium text-slate-900 mb-1">Aucune alerte active</p>
+                  <p className="text-xs text-slate-500">Toutes les métriques sont dans les seuils définis.</p>
+                </div>
+              </Section>
+            )}
+
+            {/* Snoozed */}
+            {snoozed.length > 0 && (
+              <Section title={`Masquées cette session (${snoozed.length})`}>
+                <div className="space-y-2">
+                  {snoozed.map((alert) => (
+                    <div key={alert.id} className="flex items-center gap-3 p-3 rounded-lg bg-slate-100 opacity-70">
+                      <Bell size={14} className="text-slate-500" />
+                      <span className="text-xs text-slate-500 flex-1">{alert.title}</span>
+                      <button
+                        onClick={() => unsnooze(alert.id)}
+                        className="text-xs text-slate-500 hover:text-slate-700"
+                      >
+                        Réactiver
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </Section>
+            )}
+          </>
         )}
 
         {/* Alert rules reference */}
-        <Section title="Référentiel des seuils d'alerte · par niveau funnel">
+        <Section title="Référentiel des seuils d'alerte">
           <div className="grid grid-cols-2 gap-5">
             {[
               {
-                level: "Niveau 1 · Acquisition",
+                level: "Acquisition · Meta Ads",
                 color: "#378add",
                 rules: [
-                  "CPL Angola > $1.00 → tester nouvelle créa",
-                  "CPL Maroc > $2.50 MAD → audit ciblage",
-                  "ROAS net < 1.5 sur 3 jours consécutifs → pause",
-                  "CTR < 1% sur 1000 impressions → créa morte",
-                  "Frequency Meta > 4 → saturation audience",
+                  "Dépense > $20 sans un seul lead → alerte critique",
+                  "CPL > $3 → avertissement",
                 ],
               },
               {
-                level: "Niveau 2 · Qualification",
+                level: "Qualification · Confirmation",
                 color: "#1d9e75",
                 rules: [
-                  "Confirmation Angola < 55% → audit script agents",
-                  "Confirmation Maroc < 60% → audit qualité leads",
-                  "Délai lead → confirmation > 2h → vérifier file LV",
-                  "Non-joignables > 30% → mauvais ciblage/numéros",
-                  "Agent X confirmation 20% sous la moyenne → coaching",
+                  "Taux de confirmation < 30% → critique",
+                  "Taux de confirmation < 45% → avertissement",
+                  "Appliqué à Shipsen, Coliscod Angola, Africod Congo, ClickMarket",
                 ],
               },
               {
-                level: "Niveau 3 · Livraison",
+                level: "Livraison",
                 color: "#c9a227",
                 rules: [
-                  "Livraison Angola < 65% → audit motoboys",
-                  "Livraison Maroc < 70% → audit partenaire logistique",
-                  "Délai confirmation → livraison > 4 jours → stockout ?",
-                  "RTO > 15% sur 7j → audit produit + promesse marketing",
-                  "Stock < 7j couverture → réappro urgent",
+                  "Taux de livraison < 40% → critique",
+                  "Taux de livraison < 55% → avertissement",
+                  "Appliqué à Shipsen, Coliscod Angola, Africod Congo, ClickMarket",
                 ],
               },
               {
-                level: "Niveau 4 · Encaissement",
+                level: "Synchronisation",
                 color: "#e24b4a",
                 rules: [
-                  "Écart livraisons / cash reçu > 5% sur 7j → audit motoboys",
-                  "Motoboy ratio cash < 85% sur 30+ courses → entretien",
-                  "Délai livraison → encaissement > 2j → audit cycle remise",
-                  "Cash IN = $0 + livraisons > 0 → ALERTE ROUGE",
-                  "Cash remis < cash attendu de 10% sur 24h → investigation",
+                  "Erreur de lecture d'une source de données → info",
+                  "Voir la page Sources pour le détail du statut par intégration",
                 ],
               },
             ].map(({ level, color, rules }) => (

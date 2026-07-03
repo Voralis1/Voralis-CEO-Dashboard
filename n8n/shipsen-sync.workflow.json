@@ -1,0 +1,88 @@
+{
+  "name": "Shipsen → Supabase sync",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "b2b2b2b2-0001-4000-8000-000000000001",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-640, 0]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cfg-1",
+              "name": "shipsen_email",
+              "value": "COLLEZ_L_EMAIL_SHIPSEN_ICI",
+              "type": "string"
+            },
+            {
+              "id": "cfg-2",
+              "name": "shipsen_password",
+              "value": "COLLEZ_LE_MOT_DE_PASSE_SHIPSEN_ICI",
+              "type": "string"
+            },
+            {
+              "id": "cfg-3",
+              "name": "supabase_url",
+              "value": "https://VOTRE-PROJET.supabase.co",
+              "type": "string"
+            },
+            {
+              "id": "cfg-4",
+              "name": "supabase_service_role_key",
+              "value": "COLLEZ_VOTRE_SUPABASE_SERVICE_ROLE_KEY_ICI",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "b2b2b2b2-0002-4000-8000-000000000002",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-400, 0],
+      "notes": "Un seul compte Shipsen donne accès aux 4 warehouses : ne collez ici que l'email + le mot de passe (assurez-vous que c'est un mot de passe à jour, pas un ancien exposé en clair) et les identifiants Supabase. Ne mettez jamais le vrai mot de passe dans une copie de ce fichier suivie par git — seulement dans le nœud, une fois importé dans votre instance n8n."
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $input.item.json;\n\nconst SHIPSEN_BASE = \"https://api.shipsen.com\";\nconst SUPABASE_URL = cfg.supabase_url;\nconst SUPABASE_SERVICE_ROLE_KEY = cfg.supabase_service_role_key;\nconst LIMIT = 100;\nconst UPSERT_BATCH_SIZE = 500;\nconst TOKEN_MAX_AGE_MS = 4 * 60 * 1000; // re-login défensif si un cycle traîne\n\n// Un seul compte Shipsen (email/mot de passe) donne accès aux 4 warehouses.\nconst WAREHOUSES = [\n  { country: \"Mali\", currency: \"XOF\", warehouse: \"619ff174286e83d6aa8f60ba\" },\n  { country: \"Guinea\", currency: \"GNF\", warehouse: \"61ceeaa3d08e37d6dca5f6b9\" },\n  { country: \"Senegal\", currency: \"XOF\", warehouse: \"61cee91cd08e37d6dca5e4fb\" },\n  { country: \"CoteIvoire\", currency: \"XOF\", warehouse: \"619ed4e22c5c08be6fcfd977\" },\n];\n\nfunction findHeader(headers, name) {\n  const key = Object.keys(headers || {}).find((k) => k.toLowerCase() === name.toLowerCase());\n  return key ? headers[key] : undefined;\n}\n\nfunction bodyPreview(body) {\n  try {\n    return JSON.stringify(body).slice(0, 500);\n  } catch {\n    return String(body).slice(0, 500);\n  }\n}\n\n// On utilise returnFullResponse + ignoreHttpStatusErrors partout : ça permet de lire\n// le corps de la réponse MÊME quand le statut HTTP est une erreur, pour savoir\n// précisément pourquoi (au lieu d'un AxiosError générique sans détail exploitable).\nasync function shipsenLogin() {\n  const res = await this.helpers.httpRequest({\n    method: \"POST\",\n    url: `${SHIPSEN_BASE}/users/login`,\n    headers: { \"Content-Type\": \"application/json;charset=utf-8\" },\n    body: { email: cfg.shipsen_email, password: cfg.shipsen_password },\n    json: true,\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true,\n  });\n\n  if (res.statusCode < 200 || res.statusCode >= 300) {\n    throw new Error(`POST /users/login → HTTP ${res.statusCode}: ${bodyPreview(res.body)}`);\n  }\n\n  // Particularité Shipsen : ce n'est PAS un header HTTP réel — le corps JSON de\n  // la réponse contient lui-même un champ imbriqué \"headers\" qui porte le token\n  // (contrairement à ClickMarket où le token est à la racine du corps).\n  const token = findHeader(res.body && res.body.headers, \"X-Auth-Token\");\n  if (!token) {\n    throw new Error(`POST /users/login → 200 mais pas de headers.X-Auth-Token: ${bodyPreview(res.body)}`);\n  }\n  return token;\n}\n\nconst allRows = [];\nconst errors = [];\nconst perWarehouse = [];\n\nif (!cfg.shipsen_email || !cfg.shipsen_password) {\n  errors.push({ country: \"ALL\", message: \"shipsen_email / shipsen_password manquants dans le nœud 'Config'.\" });\n} else {\n  let token = null;\n  let tokenIssuedAt = 0;\n\n  // ─── 1. Login — un seul token pour les 4 warehouses ──────────────────────\n  try {\n    token = await shipsenLogin.call(this);\n    tokenIssuedAt = Date.now();\n  } catch (err) {\n    errors.push({ country: \"ALL\", message: `Login initial échoué — ${err.message}` });\n  }\n\n  // ─── 2. Pour chaque warehouse, paginer /orders/search jusqu'à la dernière page ───\n  if (token) {\n    for (const wh of WAREHOUSES) {\n      let fetched = 0;\n      let apiTotal = null;\n\n      try {\n        let page = 1;\n        let lastPage = 1;\n\n        do {\n          // Re-login défensif si la pagination cumulée dépasse ~4 min.\n          if (Date.now() - tokenIssuedAt > TOKEN_MAX_AGE_MS) {\n            token = await shipsenLogin.call(this);\n            tokenIssuedAt = Date.now();\n          }\n\n          const res = await this.helpers.httpRequest({\n            method: \"GET\",\n            url: `${SHIPSEN_BASE}/orders/search`,\n            qs: { warehouse: wh.warehouse, limit: LIMIT, page },\n            headers: { \"X-Auth-Token\": token },\n            json: true,\n            returnFullResponse: true,\n            ignoreHttpStatusErrors: true,\n          });\n\n          if (res.statusCode < 200 || res.statusCode >= 300) {\n            throw new Error(`GET /orders/search (page ${page}) → HTTP ${res.statusCode}: ${bodyPreview(res.body)}`);\n          }\n\n          const content = (res.body && res.body.content) || {};\n          lastPage = content.last_page ?? 1;\n          if (apiTotal === null) apiTotal = content.total ?? null;\n\n          for (const o of content.results || []) {\n            const firstItem =\n              Array.isArray(o.details) && o.details.length > 0 ? o.details[0] : null;\n\n            allRows.push({\n              order_id: o.id,\n              mongo_id: o._id,\n              // On utilise wh.country/wh.currency (notre config), pas o.warehouse.country :\n              // l'API renvoie un code ISO (\"ML\") alors que le reste du système (frontend,\n              // vues SQL) attend le nom complet (\"Mali\") — inutile de parser l'un ou l'autre\n              // puisqu'on sait déjà, par warehouse, à quel pays on a affaire.\n              country: wh.country,\n              currency: wh.currency,\n              warehouse_id: o.warehouse?._id ?? wh.warehouse,\n              customer_name: o.customer?.fullName ?? null,\n              customer_phone: o.customer?.phoneNormalized ?? o.customer?.phone ?? null,\n              customer_city: o.customer?.city ?? null,\n              product_name: firstItem?.productName ?? null,\n              quantity: firstItem?.quantity ?? null,\n              unit_price: firstItem?.unitPrice ?? null,\n              total_price: o.totalPrice ?? 0,\n              status: o.status?.name ?? \"Unknown\",\n              is_processed: !!o.isProcessed,\n              is_refunded: !!o.isRefunded,\n              source: o.source ?? null,\n              order_date: o.date,\n              created_at: o.createdAt ?? null,\n              updated_at: o.updatedAt ?? null,\n              paid_at: o.paidAt ?? null,\n              processed_at: o.processedAt ?? null,\n            });\n            fetched += 1;\n          }\n\n          page += 1;\n        } while (page <= lastPage);\n      } catch (err) {\n        // Une erreur sur un warehouse ne doit pas empêcher les 3 autres d'être synchronisés.\n        errors.push({ country: wh.country, message: err.message });\n      }\n\n      // Visible même sans erreur HTTP : si apiTotal vaut 0 (ou fetched reste à 0 alors\n      // qu'apiTotal > 0), ça pointe vers un problème d'accès/ID de warehouse plutôt\n      // qu'un bug de code — un 200 OK avec une liste vide ne lève jamais d'exception.\n      perWarehouse.push({ country: wh.country, warehouse: wh.warehouse, apiTotal, fetched });\n    }\n  }\n}\n\n// ─── 3. Upsert en masse vers Supabase, par lots de 500 lignes ─────────────\n// Dédup par mongo_id d'abord : si la pagination Shipsen chevauche deux pages\n// (données qui bougent pendant la synchro), on ne veut pas que la même ligne\n// apparaisse deux fois dans un même lot (Postgres refuse \"ON CONFLICT DO UPDATE\n// ... affect row a second time\" dans ce cas). On garde la dernière occurrence.\nconst dedupedRows = Array.from(new Map(allRows.map((r) => [r.mongo_id, r])).values());\n\nlet upserted = 0;\n\n// Chaque lot est essayé indépendamment : si un lot échoue, on continue quand\n// même avec les suivants au lieu d'abandonner tout le reste de la synchro.\nfor (let i = 0; i < dedupedRows.length; i += UPSERT_BATCH_SIZE) {\n  const batch = dedupedRows.slice(i, i + UPSERT_BATCH_SIZE);\n\n  try {\n    const res = await this.helpers.httpRequest({\n      method: \"POST\",\n      url: `${SUPABASE_URL}/rest/v1/shipsen_orders`,\n      headers: {\n        \"Content-Type\": \"application/json\",\n        apikey: SUPABASE_SERVICE_ROLE_KEY,\n        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,\n        Prefer: \"resolution=merge-duplicates,return=minimal\",\n      },\n      body: batch,\n      json: true,\n      returnFullResponse: true,\n      ignoreHttpStatusErrors: true,\n    });\n\n    if (res.statusCode < 200 || res.statusCode >= 300) {\n      throw new Error(`HTTP ${res.statusCode}: ${bodyPreview(res.body)}`);\n    }\n\n    upserted += batch.length;\n  } catch (err) {\n    errors.push({ country: \"SUPABASE_UPSERT\", message: `lot ${i}-${i + batch.length}: ${err.message}` });\n  }\n}\n\nreturn [\n  {\n    json: {\n      synced_orders: upserted,\n      warehouses: WAREHOUSES.map((w) => w.country),\n      perWarehouse,\n      errors,\n      finished_at: new Date().toISOString(),\n    },\n  },\n];"
+      },
+      "id": "b2b2b2b2-0003-4000-8000-000000000003",
+      "name": "Sync Shipsen → Supabase",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-160, 0],
+      "notes": "Se connecte une fois (POST /users/login, JWT lu dans le champ imbriqué headers.X-Auth-Token DU CORPS JSON — pas un header HTTP réel), puis pagine GET /orders/search pour les 4 warehouses avec ce même token (re-login défensif si le cycle dépasse ~4 min). Aplatit chaque commande sur les colonnes de shipsen_orders et upsert vers Supabase par lots de 500. Chaque étape (login, pagination par warehouse, upsert) utilise returnFullResponse + ignoreHttpStatusErrors pour capturer le corps de la réponse même en cas d'erreur HTTP, et pousse un message précis dans 'errors' plutôt que de laisser planter tout le nœud avec une erreur générique."
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Config", "type": "main", "index": 0 }]]
+    },
+    "Config": {
+      "main": [[{ "node": "Sync Shipsen → Supabase", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
