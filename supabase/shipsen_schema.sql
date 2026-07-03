@@ -83,3 +83,63 @@ from shipsen_orders;
 
 grant select on shipsen_kpi_by_country to authenticated;
 grant select on shipsen_kpi_global to authenticated;
+
+-- Variantes filtrées par période, pour respecter le sélecteur de dates du dashboard (De / À).
+-- Utilisation : select * from kpi_shipsen_marche_periode('2026-06-01', '2026-06-30');
+create or replace function kpi_shipsen_marche_periode(date_from date, date_to date)
+returns table (
+  country text,
+  currency text,
+  total_orders bigint,
+  confirmed_orders bigint,
+  confirmation_rate numeric,
+  revenue_confirmed numeric,
+  revenue_delivered numeric,
+  cancelled_orders bigint,
+  pending_orders bigint
+)
+language sql
+security invoker
+stable
+as $$
+  select
+    country,
+    max(currency) as currency,
+    count(*) as total_orders,
+    count(*) filter (where status = 'Confirmed') as confirmed_orders,
+    round(
+      100.0 * count(*) filter (where status = 'Confirmed') / nullif(count(*), 0),
+      1
+    ) as confirmation_rate,
+    coalesce(sum(total_price) filter (where status = 'Confirmed'), 0) as revenue_confirmed,
+    coalesce(sum(total_price) filter (where is_processed = true), 0) as revenue_delivered,
+    count(*) filter (where status = 'Cancelled') as cancelled_orders,
+    count(*) filter (where status = 'Pending') as pending_orders
+  from shipsen_orders
+  where order_date::date between date_from and date_to
+  group by country;
+$$;
+
+create or replace function kpi_shipsen_global_periode(date_from date, date_to date)
+returns table (
+  total_confirmed_orders bigint,
+  total_orders_all bigint,
+  global_confirmation_rate numeric
+)
+language sql
+security invoker
+stable
+as $$
+  select
+    count(*) filter (where status = 'Confirmed') as total_confirmed_orders,
+    count(*) as total_orders_all,
+    round(
+      100.0 * count(*) filter (where status = 'Confirmed') / nullif(count(*), 0),
+      1
+    ) as global_confirmation_rate
+  from shipsen_orders
+  where order_date::date between date_from and date_to;
+$$;
+
+grant execute on function kpi_shipsen_marche_periode(date, date) to authenticated;
+grant execute on function kpi_shipsen_global_periode(date, date) to authenticated;

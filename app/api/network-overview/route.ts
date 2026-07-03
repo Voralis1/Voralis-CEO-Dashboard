@@ -52,12 +52,14 @@ export async function GET(request: Request) {
     await Promise.all([
       supabaseAdmin
         .from("meta_ads_by_country")
-        .select("channel, country, spend, impressions, clicks, leads, cpl, ctr, date"),
+        .select("channel, country, spend, impressions, clicks, leads, cpl, ctr, date")
+        .gte("date", dateFrom)
+        .lte("date", dateTo),
       supabaseAdmin.rpc("kpi_clickmarket_marche_periode", { date_from: dateFrom, date_to: dateTo }),
       supabaseAdmin.rpc("kpi_coliscod_marche_periode", { date_from: dateFrom, date_to: dateTo }),
       supabaseAdmin.rpc("kpi_africod_congo_marche_periode", { date_from: dateFrom, date_to: dateTo }),
-      supabaseAdmin.from("shipsen_kpi_by_country").select("*"),
-      supabaseAdmin.from("shipsen_kpi_global").select("*").single(),
+      supabaseAdmin.rpc("kpi_shipsen_marche_periode", { date_from: dateFrom, date_to: dateTo }),
+      supabaseAdmin.rpc("kpi_shipsen_global_periode", { date_from: dateFrom, date_to: dateTo }).single(),
     ]);
 
   const errors: Record<string, string> = {};
@@ -65,7 +67,8 @@ export async function GET(request: Request) {
   if (clickmarketRes.error) errors.clickmarket = clickmarketRes.error.message;
   if (coliscodRes.error) errors.coliscod = coliscodRes.error.message;
   if (africodCongoRes.error) errors.africodCongo = africodCongoRes.error.message;
-  if (shipsenByCountryRes.error) errors.shipsen = shipsenByCountryRes.error.message;
+  if (shipsenByCountryRes.error || shipsenGlobalRes.error)
+    errors.shipsen = shipsenByCountryRes.error?.message ?? shipsenGlobalRes.error?.message ?? "Unknown error";
 
   return Response.json({
     metaAds: (metaAdsRes.data ?? []) as MetaAdsRow[],

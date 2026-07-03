@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { Section, Badge } from "@/components/ui";
 import { Loader2, AlertTriangle } from "lucide-react";
+import { useFilters } from "@/lib/filters";
 
 interface CountryKpi {
   country: string;
@@ -41,6 +42,7 @@ function fmtCurrency(value: number, currency: string): string {
 }
 
 export default function ShipsenKpiDashboard() {
+  const { dateFrom, dateTo } = useFilters();
   const [byCountry, setByCountry] = useState<CountryKpi[]>([]);
   const [global, setGlobal] = useState<GlobalKpi | null>(null);
   const [loading, setLoading] = useState(true);
@@ -48,29 +50,32 @@ export default function ShipsenKpiDashboard() {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
 
-    fetch("/api/shipsen/kpi")
-      .then((res) => res.json())
-      .then((json) => {
+    async function load() {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const res = await fetch(`/api/shipsen/kpi?dateFrom=${dateFrom}&dateTo=${dateTo}`);
+        const json = await res.json();
         if (json.error) throw new Error(json.error);
         if (!cancelled) {
           setByCountry(json.byCountry ?? []);
           setGlobal(json.global ?? null);
         }
-      })
-      .catch((err) => {
+      } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Erreur inconnue");
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setLoading(false);
-      });
+      }
+    }
+
+    load();
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [dateFrom, dateTo]);
 
   const sorted = [...byCountry].sort((a, b) => b.confirmed_orders - a.confirmed_orders);
   const totalConfirmed = global?.total_confirmed_orders ?? 0;

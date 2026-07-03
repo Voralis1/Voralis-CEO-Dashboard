@@ -192,53 +192,21 @@ export interface MetaAdsCountryRow {
 }
 
 export async function fetchMetaAdsByCountry(dateFrom?: string, dateTo?: string) {
-  // First, get ALL data to debug
-  const { data: allData, error: allError } = await supabase
+  let query = supabase
     .from("meta_ads_by_country")
     .select("channel, country, spend, impressions, clicks, leads, cpl, ctr, date");
 
-  console.log("🔍 DEBUG fetchMetaAdsByCountry START");
-  console.log("   allData?.length:", allData?.length);
-  console.log("   dateFrom:", dateFrom, "dateTo:", dateTo);
+  if (dateFrom) query = query.gte("date", dateFrom);
+  if (dateTo) query = query.lte("date", dateTo);
 
-  if (allError) {
-    console.error("❌ Error fetching meta ads:", allError);
+  const { data, error } = await query;
+
+  if (error) {
+    console.error("❌ Error fetching meta ads:", error);
     return [];
   }
 
-  if (!allData || allData.length === 0) {
-    console.warn("⚠️  No data in table at all");
-    return [];
-  }
-
-  console.log("✅ Got", allData.length, "rows from table");
-
-  // Check if any row has a date value
-  const hasDateValues = allData.some((row) => row.date != null);
-  console.log("   Rows have date values?", hasDateValues);
-
-  // If no date values, just return all data (ignore date filter)
-  if (!hasDateValues) {
-    console.log("   📌 All date columns are NULL - returning all rows without date filtering");
-    return allData as MetaAdsCountryRow[];
-  }
-
-  // If dates exist, filter by date range
-  if (dateFrom || dateTo) {
-    const filtered = (allData as MetaAdsCountryRow[]).filter((row) => {
-      const rowDate = row.date ? row.date.split("T")[0] : row.date;
-      const matches =
-        (!dateFrom || rowDate >= dateFrom) &&
-        (!dateTo || rowDate <= dateTo);
-      return matches;
-    });
-
-    console.log("   After filtering by date [" + dateFrom + ", " + dateTo + "]:", filtered.length, "rows");
-    return filtered;
-  }
-
-  console.log("🔍 DEBUG fetchMetaAdsByCountry END - returning", allData.length, "rows");
-  return allData as MetaAdsCountryRow[];
+  return (data ?? []) as MetaAdsCountryRow[];
 }
 
 export interface ClickMarketKpiRow {
