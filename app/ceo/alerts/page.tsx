@@ -4,7 +4,8 @@ import Topbar from "@/components/layout/Topbar";
 import { Section, Badge } from "@/components/ui";
 import { useFilters } from "@/lib/filters";
 import { fetchNetworkOverview, computeAlerts, type Alert, type AlertLevel } from "@/lib/dashboardData";
-import { AlertTriangle, Info, Bell, CheckCircle, Clock, Loader2 } from "lucide-react";
+import { AlertTriangle, Info, Bell, CheckCircle, Clock, Loader2, MapPin, Wrench, TrendingUp } from "lucide-react";
+import type { CopilotAlert, CopilotAlertLevel } from "@/lib/copilot/alerts";
 
 const levelConfig: Record<AlertLevel, { icon: React.ElementType; color: string; border: string; bg: string; label: string }> = {
   critical: { icon: AlertTriangle, color: "text-red-600", border: "border-l-red-500", bg: "bg-red-50", label: "Critique" },
@@ -50,12 +51,51 @@ function AlertCard({ alert, onSnooze }: { alert: Alert; onSnooze: (id: string) =
   );
 }
 
+const copilotLevelConfig: Record<CopilotAlertLevel, { color: string; border: string; bg: string; label: string }> = {
+  critical: { color: "text-red-600", border: "border-l-red-500", bg: "bg-red-50", label: "Critique" },
+  warning: { color: "text-amber-600", border: "border-l-amber-500", bg: "bg-amber-50", label: "Avertissement" },
+  info: { color: "text-blue-600", border: "border-l-blue-500", bg: "bg-blue-50", label: "Info" },
+};
+
+// Format imposé OÙ / QUOI / IMPACT (Alertes + Chatbot) — jamais un chiffre nu, toujours suivi
+// d'une action, cohérent avec ce que produit le copilote conversationnel (/ceo/copilot).
+function CopilotAlertCard({ alert }: { alert: CopilotAlert }) {
+  const cfg = copilotLevelConfig[alert.level];
+  return (
+    <div className={`flex gap-4 p-4 rounded-xl border border-slate-200 border-l-2 ${cfg.border} ${cfg.bg}`}>
+      <div className={`mt-0.5 ${cfg.color} shrink-0`}>
+        <AlertTriangle size={18} />
+      </div>
+      <div className="flex-1 min-w-0 space-y-1.5">
+        <div className="flex items-start justify-between gap-4">
+          <p className="flex items-center gap-1.5 text-xs font-semibold text-slate-500">
+            <MapPin size={12} /> {alert.ou}
+          </p>
+          <Badge variant={alert.level === "critical" ? "red" : alert.level === "warning" ? "yellow" : "blue"}>{cfg.label}</Badge>
+        </div>
+        <p className="flex items-start gap-1.5 text-sm text-slate-900">
+          <Wrench size={13} className="mt-0.5 shrink-0 text-slate-400" />
+          {alert.quoi}
+        </p>
+        <p className="flex items-start gap-1.5 text-xs text-slate-500">
+          <TrendingUp size={12} className="mt-0.5 shrink-0" />
+          {alert.impact}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function AlertsPage() {
   const { dateFrom, dateTo } = useFilters();
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [snoozedIds, setSnoozedIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [copilotAlerts, setCopilotAlerts] = useState<CopilotAlert[]>([]);
+  const [copilotLoading, setCopilotLoading] = useState(true);
+  const [copilotError, setCopilotError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -75,6 +115,31 @@ export default function AlertsPage() {
     }
 
     load();
+    return () => {
+      cancelled = true;
+    };
+  }, [dateFrom, dateTo]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCopilotAlerts() {
+      setCopilotLoading(true);
+      setCopilotError(null);
+
+      try {
+        const res = await fetch(`/api/copilot/alerts?dateFrom=${dateFrom}&dateTo=${dateTo}`);
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error ?? `Erreur ${res.status}`);
+        if (!cancelled) setCopilotAlerts(json.alerts as CopilotAlert[]);
+      } catch (err) {
+        if (!cancelled) setCopilotError(err instanceof Error ? err.message : "Erreur inconnue");
+      } finally {
+        if (!cancelled) setCopilotLoading(false);
+      }
+    }
+
+    loadCopilotAlerts();
     return () => {
       cancelled = true;
     };
@@ -127,6 +192,32 @@ export default function AlertsPage() {
                 </div>
               ))}
             </div>
+
+            {/* Alertes proactives — funnel complet + marge, rendues par template déterministe
+                (aucun appel LLM), reprennent le même moteur que le copilot conversationnel. */}
+            <Section
+              title="Alertes proactives (funnel & marge)"
+              titleRight={<span className="text-xs text-slate-400">Délai contact · stock · CPL/payout · DR% · cash</span>}
+            >
+              {copilotError && (
+                <div className="flex items-center gap-2 p-3 mb-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm">
+                  <AlertTriangle size={14} />
+                  {copilotError}
+                </div>
+              )}
+              {copilotLoading && copilotAlerts.length === 0 && !copilotError ? (
+                <div className="flex items-center justify-center py-8 text-slate-400 gap-2">
+                  <Loader2 size={16} className="animate-spin" />
+                  <span className="text-sm">Analyse du funnel en cours…</span>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {copilotAlerts.map((alert) => (
+                    <CopilotAlertCard key={alert.id} alert={alert} />
+                  ))}
+                </div>
+              )}
+            </Section>
 
             {/* Active alerts */}
             {active.length > 0 ? (

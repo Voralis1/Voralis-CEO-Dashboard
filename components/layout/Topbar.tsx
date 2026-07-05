@@ -1,5 +1,5 @@
 "use client";
-import { useFilters } from "@/lib/filters";
+import DateRangeFilter from "@/components/layout/DateRangeFilter";
 import { RefreshCw } from "lucide-react";
 
 interface TopbarProps {
@@ -8,8 +8,6 @@ interface TopbarProps {
 }
 
 export default function Topbar({ title, subtitle }: TopbarProps) {
-  const { dateFrom, dateTo, setDateFrom, setDateTo } = useFilters();
-
   return (
     <header className="flex flex-col gap-3 px-6 pt-6 pb-4 border-b border-slate-200">
       <div className="flex items-start justify-between">
@@ -24,25 +22,7 @@ export default function Topbar({ title, subtitle }: TopbarProps) {
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        {/* Date Range */}
-        <div className="flex items-center gap-2 bg-slate-50 rounded-lg p-2">
-          <label className="text-xs text-slate-500">De</label>
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            max={dateTo}
-            className="px-2 py-1.5 text-xs bg-white text-slate-900 border border-slate-300 rounded-md hover:border-slate-400 focus:outline-none focus:border-emerald-500 transition-colors"
-          />
-          <label className="text-xs text-slate-500">À</label>
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            min={dateFrom}
-            className="px-2 py-1.5 text-xs bg-white text-slate-900 border border-slate-300 rounded-md hover:border-slate-400 focus:outline-none focus:border-emerald-500 transition-colors"
-          />
-        </div>
+        <DateRangeFilter />
       </div>
     </header>
   );

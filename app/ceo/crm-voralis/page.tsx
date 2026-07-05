@@ -1,242 +1,310 @@
 "use client";
+import { useEffect, useMemo, useState } from "react";
 import Topbar from "@/components/layout/Topbar";
-import { Section, Badge, ProgressBar } from "@/components/ui";
-import { ChevronDown, ChevronUp, Loader2, AlertTriangle } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Section, Badge } from "@/components/ui";
+import { useFilters } from "@/lib/filters";
+import { fetchAffiliatesData, type AffiliateRow, type CountryAffiliateRow, type AffiliatesData } from "@/lib/affiliates";
+import { AlertTriangle, Loader2, Info, ArrowUpDown } from "lucide-react";
 
-interface EntityStats {
-  total_orders: number;
-  confirmed_orders: number;
-  delivered_orders: number;
-  total_payout: number;
+type AffiliateSortKey = "payoutPerConfirmedUsd" | "drPct" | "deliveredOrders" | "totalPayoutUsd";
+
+const DEFAULT_THRESHOLD_USD = 5;
+
+function fmtUsd(value: number): string {
+  return `$${value.toLocaleString("fr-FR", { maximumFractionDigits: 2 })}`;
 }
 
-interface AffiliateEntry {
-  id: string;
-  name: string;
-  created_at: string;
-  stats: EntityStats;
+function GapCell({ text }: { text: string }) {
+  return (
+    <span
+      title={text}
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200 cursor-help"
+    >
+      <Info size={10} />
+      incomplète
+    </span>
+  );
 }
 
-interface NetworkEntry {
-  id: string;
-  name: string;
-  email: string;
-  status: string;
-  created_at: string;
-  stats: EntityStats;
-  affiliates: AffiliateEntry[];
-}
-
-interface NetworksResponse {
-  success: boolean;
-  message?: string;
-  totals: { networks: number; affiliates: number; confirmed_orders: number };
-  networks: NetworkEntry[];
-}
-
-function rate(stats: EntityStats) {
-  return stats.total_orders > 0 ? Math.round((stats.confirmed_orders / stats.total_orders) * 100) : 0;
-}
-
-function plural(count: number, singular: string, pluralForm = `${singular}s`) {
-  return count > 1 ? pluralForm : singular;
+function SortableHeader({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <th
+      onClick={onClick}
+      className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap cursor-pointer select-none hover:text-slate-700"
+    >
+      <span className="flex items-center gap-1">
+        {label}
+        <ArrowUpDown size={10} className={active ? "text-slate-700" : "text-slate-300"} />
+      </span>
+    </th>
+  );
 }
 
 export default function CrmVoralisPage() {
-  const [data, setData] = useState<NetworksResponse | null>(null);
+  const { dateFrom, dateTo } = useFilters();
+  const [data, setData] = useState<AffiliatesData | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [expandedNetwork, setExpandedNetwork] = useState<string | null>(null);
+  const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD_USD);
+
+  const [affSortKey, setAffSortKey] = useState<AffiliateSortKey>("payoutPerConfirmedUsd");
+  const [affSortAsc, setAffSortAsc] = useState(true);
+  const [countrySortKey, setCountrySortKey] = useState<AffiliateSortKey>("payoutPerConfirmedUsd");
+  const [countrySortAsc, setCountrySortAsc] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/networks")
-      .then((res) => res.json())
-      .then((json: NetworksResponse) => {
-        if (cancelled) return;
-        if (!json.success) {
-          setError(json.message || "Erreur lors du chargement des données CRM Voralis.");
-          return;
-        }
-        setData(json);
-        setExpandedNetwork(json.networks[0]?.id ?? null);
-      })
-      .catch(() => {
-        if (!cancelled) setError("Impossible de contacter le CRM Voralis.");
-      });
+
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        const result = await fetchAffiliatesData(dateFrom, dateTo);
+        if (!cancelled) setData(result);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Erreur inconnue");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [dateFrom, dateTo]);
 
-  const toggleNetwork = (id: string) => {
-    setExpandedNetwork((current) => (current === id ? null : id));
-  };
+  // null (non calculable — pas de commande livrée/confirmée) toujours en fin de tri, jamais
+  // confondu avec 0 (qui serait un vrai coût nul).
+  function sortByNullable<T>(rows: T[], key: (r: T) => number | null, asc: boolean): T[] {
+    return [...rows].sort((a, b) => {
+      const va = key(a);
+      const vb = key(b);
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      return asc ? va - vb : vb - va;
+    });
+  }
+
+  function affiliateSortValue(r: AffiliateRow, k: AffiliateSortKey): number | null {
+    return r[k];
+  }
+  function countrySortValue(r: CountryAffiliateRow, k: AffiliateSortKey): number | null {
+    return r[k];
+  }
+
+  const sortedAffiliates = useMemo(
+    () => (data ? sortByNullable(data.affiliates, (r) => affiliateSortValue(r, affSortKey), affSortAsc) : []),
+    [data, affSortKey, affSortAsc]
+  );
+  const sortedCountries = useMemo(
+    () => (data ? sortByNullable(data.byCountry, (r) => countrySortValue(r, countrySortKey), countrySortAsc) : []),
+    [data, countrySortKey, countrySortAsc]
+  );
+
+  function toggleAffSort(key: AffiliateSortKey) {
+    if (affSortKey === key) setAffSortAsc((v) => !v);
+    else {
+      setAffSortKey(key);
+      setAffSortAsc(true);
+    }
+  }
+  function toggleCountrySort(key: AffiliateSortKey) {
+    if (countrySortKey === key) setCountrySortAsc((v) => !v);
+    else {
+      setCountrySortKey(key);
+      setCountrySortAsc(true);
+    }
+  }
+
+  if (error) {
+    return (
+      <div>
+        <Topbar title="CRM Voralis" subtitle="Affiliés — décision scale/stop sur livré + rentabilité" />
+        <div className="px-6 py-5">
+          <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm">
+            <AlertTriangle size={14} />
+            {error}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading || !data) {
+    return (
+      <div>
+        <Topbar title="CRM Voralis" subtitle="Affiliés — décision scale/stop sur livré + rentabilité" />
+        <div className="px-6 flex items-center justify-center py-16 text-slate-400 gap-2">
+          <Loader2 size={16} className="animate-spin" />
+          <span className="text-sm">Chargement des données CRM Voralis…</span>
+        </div>
+      </div>
+    );
+  }
+
+  const outOfScopeCountries = data.byCountry.filter((c) => c.countryName == null);
 
   return (
     <div>
       <Topbar
         title="CRM Voralis"
-        subtitle="Réseaux d'affiliés, affiliés, commandes confirmées et taux de confirmation"
+        subtitle="Affiliés — décision scale/stop sur livré + rentabilité (le taux de confirmation reste un diagnostic funnel, jamais décisionnel)"
       />
 
       <div className="px-6 py-5 space-y-5">
-        {error && (
-          <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm">
-            <AlertTriangle size={14} />
-            {error}
+        <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 text-xs">
+          <Info size={14} className="shrink-0 mt-0.5" />
+          <p>
+            On juge sur <strong>livré + rentabilité</strong>, jamais sur le taux de confirmation seul. Le coût payout, lui,
+            est calculé par commande <strong>confirmée</strong> (pas livrée) : c&apos;est à la confirmation que le payout est dû
+            dans ce business — exception valable uniquement pour ce coût. La rentabilité nette (revenu net livraison − payout −
+            COGS − call center − retours) reste <strong>incomplète</strong> : le CRM ne fournit pas encore le CA livré encaissé
+            par affilié/pays, seulement les comptages et le payout (en USD, sans conversion). Dès que ce CA sera branché, la
+            marge se calculera automatiquement en USD (comme le payout), via FX pour convertir le CA local — cohérent avec
+            /profitability.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-slate-500">Seuil d&apos;alerte coût payout/confirmée</label>
+          <div className="flex items-center gap-1 bg-slate-50 rounded-lg px-2 py-1.5 border border-slate-200">
+            <span className="text-xs text-slate-400">$</span>
+            <input
+              type="number"
+              value={threshold}
+              onChange={(e) => setThreshold(e.target.valueAsNumber || 0)}
+              className="w-16 text-xs bg-transparent focus:outline-none"
+            />
           </div>
-        )}
+          <span className="text-[10px] text-slate-400">au-dessus = badge rouge (paramètre local, non persisté)</span>
+        </div>
 
-        {!data && !error && (
-          <div className="flex items-center justify-center py-16 text-slate-400 gap-2">
-            <Loader2 size={16} className="animate-spin" />
-            <span className="text-sm">Chargement des données CRM Voralis…</span>
-          </div>
-        )}
-
-        {data && (
-          <>
-            {/* Overall Stats */}
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              <Section title="Total Réseaux">
-                <p className="text-3xl font-bold text-slate-900 mt-2">{data.totals.networks}</p>
-              </Section>
-              <Section title="Total Affiliés">
-                <p className="text-3xl font-bold text-slate-900 mt-2">{data.totals.affiliates}</p>
-              </Section>
-              <Section title="Total commandes confirmées">
-                <p className="text-3xl font-bold text-emerald-600 mt-2">{data.totals.confirmed_orders}</p>
-              </Section>
-            </div>
-
-            {/* Affiliate Networks */}
-            <Section title="Réseaux d'affiliés">
-              {data.networks.length === 0 ? (
-                <p className="text-sm text-slate-500">Aucun réseau d&apos;affiliés pour le moment.</p>
-              ) : (
-                <div className="space-y-3">
-                  {data.networks.map((network) => {
-                    const isExpanded = expandedNetwork === network.id;
-                    const networkRate = rate(network.stats);
-                    return (
-                      <div key={network.id} className="border border-slate-200 rounded-lg overflow-hidden">
-                        {/* Network Header */}
-                        <button
-                          onClick={() => toggleNetwork(network.id)}
-                          className="w-full px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors flex items-center justify-between"
-                        >
-                          <div className="flex items-center gap-3">
-                            <div>
-                              <p className="text-sm font-semibold text-slate-900 text-left">{network.name}</p>
-                              <p className="text-xs text-slate-500 text-left mt-1">
-                                {network.affiliates.length} {plural(network.affiliates.length, "affilié")} · {network.stats.confirmed_orders} {plural(network.stats.confirmed_orders, "commande confirmée", "commandes confirmées")} · {networkRate}% taux moyen
-                              </p>
-                            </div>
-                          </div>
-                          {isExpanded ? (
-                            <ChevronUp size={18} className="text-slate-500" />
-                          ) : (
-                            <ChevronDown size={18} className="text-slate-500" />
-                          )}
-                        </button>
-
-                        {/* Affiliates Table */}
-                        {isExpanded && (
-                          <div className="border-t border-slate-200 overflow-x-auto">
-                            {network.affiliates.length === 0 ? (
-                              <p className="text-xs text-slate-500 px-4 py-3">Aucun affilié dans ce réseau.</p>
-                            ) : (
-                              <table className="w-full text-xs">
-                                <thead>
-                                  <tr className="bg-white border-b border-slate-200">
-                                    {["Affilié", "Commandes", "Commandes confirmées", "Taux Confirmation"].map((h) => (
-                                      <th key={h} className="text-left px-4 py-3 text-slate-500 font-medium">{h}</th>
-                                    ))}
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {network.affiliates.map((affiliate) => {
-                                    const affRate = rate(affiliate.stats);
-                                    return (
-                                      <tr key={affiliate.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                                        <td className="px-4 py-3 text-slate-700 font-medium">{affiliate.name}</td>
-                                        <td className="px-4 py-3 text-slate-500">{affiliate.stats.total_orders}</td>
-                                        <td className="px-4 py-3 font-semibold text-emerald-600">
-                                          {affiliate.stats.confirmed_orders}
-                                        </td>
-                                        <td className="px-4 py-3">
-                                          <div className="flex items-center gap-3">
-                                            <ProgressBar
-                                              value={affRate}
-                                              color={affRate >= 80 ? "#1d9e75" : affRate >= 70 ? "#ef9f27" : "#e24b4a"}
-                                              className="w-20"
-                                            />
-                                            <span
-                                              className={
-                                                affRate >= 80
-                                                  ? "text-emerald-600"
-                                                  : affRate >= 70
-                                                  ? "text-amber-600"
-                                                  : "text-red-600"
-                                              }
-                                            >
-                                              {affRate}%
-                                            </span>
-                                          </div>
-                                        </td>
-                                      </tr>
-                                    );
-                                  })}
-                                </tbody>
-                              </table>
-                            )}
-                          </div>
+        {/* ═══ Par affilié ═══ */}
+        <Section title={`Leaderboard par affilié (${data.totals.affiliates})`}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-slate-200">
+                  <th className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">Affilié</th>
+                  <th className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">Réseau</th>
+                  <SortableHeader label="Commandes" active={affSortKey === "deliveredOrders"} onClick={() => toggleAffSort("deliveredOrders")} />
+                  <th className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">Confirmées (diagnostic)</th>
+                  <SortableHeader label="Livrées" active={affSortKey === "deliveredOrders"} onClick={() => toggleAffSort("deliveredOrders")} />
+                  <SortableHeader label="DR%" active={affSortKey === "drPct"} onClick={() => toggleAffSort("drPct")} />
+                  <SortableHeader label="Payout total (USD)" active={affSortKey === "totalPayoutUsd"} onClick={() => toggleAffSort("totalPayoutUsd")} />
+                  <SortableHeader label="Coût payout / confirmée" active={affSortKey === "payoutPerConfirmedUsd"} onClick={() => toggleAffSort("payoutPerConfirmedUsd")} />
+                  <th className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">Rentabilité nette (USD)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedAffiliates.map((r) => {
+                  const overThreshold = r.payoutPerConfirmedUsd != null && r.payoutPerConfirmedUsd > threshold;
+                  return (
+                    <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                      <td className="px-3 py-3 font-medium text-slate-900">{r.name}</td>
+                      <td className="px-3 py-3 text-slate-500">{r.networkName}</td>
+                      <td className="px-3 py-3 text-slate-500">{r.totalOrders.toLocaleString("fr-FR")}</td>
+                      <td className="px-3 py-3">
+                        <span className="text-slate-500">{r.confirmedOrders.toLocaleString("fr-FR")}</span>
+                      </td>
+                      <td className="px-3 py-3 font-semibold text-emerald-600">{r.deliveredOrders.toLocaleString("fr-FR")}</td>
+                      <td className="px-3 py-3 text-slate-700">{r.drPct != null ? `${r.drPct}%` : "—"}</td>
+                      <td className="px-3 py-3 text-slate-700">{fmtUsd(r.totalPayoutUsd)}</td>
+                      <td className="px-3 py-3">
+                        {r.payoutPerConfirmedUsd != null ? (
+                          <span className="flex items-center gap-1.5">
+                            <span className={overThreshold ? "text-red-600 font-semibold" : "text-slate-700"}>
+                              {fmtUsd(r.payoutPerConfirmedUsd)}
+                            </span>
+                            {overThreshold && <Badge variant="red">coût élevé</Badge>}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400" title="Aucune commande confirmée sur cette période">—</span>
                         )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </Section>
-
-            {/* Network Comparison */}
-            <Section title="Comparaison des réseaux">
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-200">
-                      {["Réseau", "Affiliés", "Commandes confirmées", "Taux Moyen"].map((h) => (
-                        <th key={h} className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">{h}</th>
-                      ))}
+                      </td>
+                      <td className="px-3 py-3">
+                        <GapCell text="CA livré encaissé non exposé par le CRM pour cet affilié — rentabilité non calculable." />
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {[...data.networks]
-                      .sort((a, b) => b.stats.confirmed_orders - a.stats.confirmed_orders)
-                      .map((network) => {
-                        const networkRate = rate(network.stats);
-                        return (
-                          <tr key={network.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                            <td className="px-3 py-3 font-medium text-slate-900">{network.name}</td>
-                            <td className="px-3 py-3 text-slate-700">{network.affiliates.length}</td>
-                            <td className="px-3 py-3 font-semibold text-emerald-600">
-                              {network.stats.confirmed_orders}
-                            </td>
-                            <td className="px-3 py-3">
-                              <Badge variant={networkRate >= 80 ? "green" : networkRate >= 70 ? "yellow" : "red"}>
-                                {networkRate}%
-                              </Badge>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                  </tbody>
-                </table>
-              </div>
-            </Section>
-          </>
-        )}
+                  );
+                })}
+                {sortedAffiliates.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="px-3 py-4 text-center text-slate-500">Aucun affilié pour cette période.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Section>
+
+        {/* ═══ Par pays ═══ */}
+        <Section title="Leaderboard par pays (tous affiliés confondus)">
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-slate-200">
+                  <th className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">Pays</th>
+                  <th className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">Commandes</th>
+                  <th className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">Confirmées (diagnostic)</th>
+                  <SortableHeader label="Livrées" active={countrySortKey === "deliveredOrders"} onClick={() => toggleCountrySort("deliveredOrders")} />
+                  <SortableHeader label="DR%" active={countrySortKey === "drPct"} onClick={() => toggleCountrySort("drPct")} />
+                  <SortableHeader label="Payout total (USD)" active={countrySortKey === "totalPayoutUsd"} onClick={() => toggleCountrySort("totalPayoutUsd")} />
+                  <SortableHeader label="Coût payout / confirmée" active={countrySortKey === "payoutPerConfirmedUsd"} onClick={() => toggleCountrySort("payoutPerConfirmedUsd")} />
+                  <th className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">Rentabilité nette (USD)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedCountries.filter((c) => c.countryName != null).map((r) => {
+                  const overThreshold = r.payoutPerConfirmedUsd != null && r.payoutPerConfirmedUsd > threshold;
+                  return (
+                    <tr key={r.countryCode} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                      <td className="px-3 py-3">
+                        <div className="flex items-center gap-2 font-medium text-slate-900">
+                          <span className="text-base">{r.flag}</span>
+                          {r.countryName}
+                        </div>
+                      </td>
+                      <td className="px-3 py-3 text-slate-500">{r.totalOrders.toLocaleString("fr-FR")}</td>
+                      <td className="px-3 py-3 text-slate-500">{r.confirmedOrders.toLocaleString("fr-FR")}</td>
+                      <td className="px-3 py-3 font-semibold text-emerald-600">{r.deliveredOrders.toLocaleString("fr-FR")}</td>
+                      <td className="px-3 py-3 text-slate-700">{r.drPct != null ? `${r.drPct}%` : "—"}</td>
+                      <td className="px-3 py-3 text-slate-700">{fmtUsd(r.totalPayoutUsd)}</td>
+                      <td className="px-3 py-3">
+                        {r.payoutPerConfirmedUsd != null ? (
+                          <span className="flex items-center gap-1.5">
+                            <span className={overThreshold ? "text-red-600 font-semibold" : "text-slate-700"}>
+                              {fmtUsd(r.payoutPerConfirmedUsd)}
+                            </span>
+                            {overThreshold && <Badge variant="red">coût élevé</Badge>}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400" title="Aucune commande confirmée sur cette période">—</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-3">
+                        <GapCell text="CA livré encaissé non exposé par le CRM pour ce pays — rentabilité non calculable." />
+                      </td>
+                    </tr>
+                  );
+                })}
+                {sortedCountries.filter((c) => c.countryName != null).length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="px-3 py-4 text-center text-slate-500">Aucun pays COD pour cette période.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          {outOfScopeCountries.length > 0 && (
+            <p className="text-xs text-amber-600 mt-3">
+              Codes pays hors périmètre COD (aucun market_settings associé, exclus du tableau) :{" "}
+              {outOfScopeCountries.map((c) => `${c.countryCode} (${c.totalOrders} commande${c.totalOrders > 1 ? "s" : ""})`).join(", ")}
+            </p>
+          )}
+        </Section>
       </div>
     </div>
   );

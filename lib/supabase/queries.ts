@@ -191,15 +191,13 @@ export interface MetaAdsCountryRow {
   date: string;
 }
 
-export async function fetchMetaAdsByCountry(dateFrom?: string, dateTo?: string) {
-  let query = supabase
+// Pas de filtrage par période : meta_ads_by_country a une colonne `date` mais elle n'est jamais
+// renseignée (table de snapshot cumulatif par pays/canal, pas une série temporelle) — un filtre
+// dessus exclurait toutes les lignes.
+export async function fetchMetaAdsByCountry() {
+  const { data, error } = await supabase
     .from("meta_ads_by_country")
     .select("channel, country, spend, impressions, clicks, leads, cpl, ctr, date");
-
-  if (dateFrom) query = query.gte("date", dateFrom);
-  if (dateTo) query = query.lte("date", dateTo);
-
-  const { data, error } = await query;
 
   if (error) {
     console.error("❌ Error fetching meta ads:", error);
@@ -218,6 +216,10 @@ export interface ClickMarketKpiRow {
   livres: number;
   taux_livraison: number | null;
   ca_livre: number;
+  en_attente: number;
+  annulees: number;
+  rupture_stock: number;
+  doublons: number;
 }
 
 export async function fetchClickMarketKpis(dateFrom: string, dateTo: string) {
@@ -243,6 +245,10 @@ export interface ColiscodKpiRow {
   livres: number;
   taux_livraison: number | null;
   ca_livre: number;
+  en_attente: number;
+  annulees: number;
+  rupture_stock: number;
+  doublons: number;
 }
 
 export async function fetchColiscodKpis(dateFrom: string, dateTo: string) {
@@ -268,6 +274,10 @@ export interface AfricodCongoKpiRow {
   livres: number;
   taux_livraison: number | null;
   ca_livre: number;
+  en_attente: number;
+  annulees: number;
+  rupture_stock: number;
+  doublons: number;
 }
 
 export async function fetchAfricodCongoKpis(dateFrom: string, dateTo: string) {

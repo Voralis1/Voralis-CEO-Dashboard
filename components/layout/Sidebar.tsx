@@ -14,23 +14,27 @@ import {
   Globe,
   Zap,
   Share2,
-  Map,
   LogOut,
+  Settings,
+  Target,
+  Package,
+  Bot,
 } from "lucide-react";
 import { fetchNetworkOverview, computeAlerts } from "@/lib/dashboardData";
 
 const NAV = [
   { href: "/ceo",               label: "Trésorerie", icon: LayoutDashboard, exact: true },
   { href: "/ceo/profitability", label: "Rentabilité", icon: TrendingUp },
-  { href: "/ceo/meta-ads",      label: "Meta Ads", icon: Globe },
-  { href: "/ceo/shipsen",       label: "Shipsen", icon: Zap },
-  { href: "/ceo/noki-noki",     label: "Africod Congo", icon: Share2 },
-  { href: "/ceo/coliscod",      label: "Coliscod Angola", icon: Map },
-  { href: "/ceo/clickmarket",   label: "ClickMarket", icon: Zap },
+  { href: "/ceo/thresholds",    label: "Seuils & plafonds", icon: Target },
+  { href: "/ceo/meta-ads",      label: "Media Buying Interne", icon: Globe },
+  { href: "/ceo/logistics-cod", label: "Réseaux Logistiques / COD", icon: Zap },
   { href: "/ceo/crm-voralis",   label: "CRM Voralis", icon: Share2 },
+  { href: "/ceo/inventory",     label: "Stock & Inventaire", icon: Package },
+  { href: "/ceo/copilot",       label: "Copilot IA", icon: Bot },
   { href: "/ceo/alerts",        label: "Alertes",    icon: Bell },
   { href: "/ceo/team",          label: "Équipe",     icon: Users },
   { href: "/ceo/connections",   label: "Sources",    icon: Plug },
+  { href: "/ceo/market-settings", label: "Paramètres marché", icon: Settings },
 ];
 
 export default function Sidebar() {

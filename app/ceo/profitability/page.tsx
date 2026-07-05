@@ -3,19 +3,26 @@ import { useEffect, useState } from "react";
 import Topbar from "@/components/layout/Topbar";
 import { Section, Badge } from "@/components/ui";
 import { useFilters } from "@/lib/filters";
-import { fetchNetworkOverview, fmtCurrency, type NetworkOverview } from "@/lib/dashboardData";
-import { fmtUSD } from "@/lib/data";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { fmtCurrency } from "@/lib/dashboardData";
+import { COUNTRY_FLAGS } from "@/lib/countries";
+import { fetchProfitabilityData, type ProfitabilityData } from "@/lib/profitability";
+import { AlertTriangle, Loader2, Info } from "lucide-react";
 
-const COUNTRY_FLAGS: Record<string, string> = {
-  Angola: "🇦🇴", Maroc: "🇲🇦", Sénégal: "🇸🇳", "Côte d'Ivoire": "🇨🇮", Mali: "🇲🇱",
-  Gabon: "🇬🇦", Guinée: "🇬🇳", "Congo-Brazza": "🇨🇬", Congo: "🇨🇬", Senegal: "🇸🇳",
-  "Cote d'Ivoire": "🇨🇮", Guinea: "🇬🇳",
-};
+function GapCell({ missingFields }: { missingFields: string[] }) {
+  return (
+    <span
+      title={`Donnée manquante : ${missingFields.join(", ")}`}
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200 cursor-help"
+    >
+      <Info size={10} />
+      donnée manquante
+    </span>
+  );
+}
 
 export default function ProfitabilityPage() {
   const { dateFrom, dateTo } = useFilters();
-  const [overview, setOverview] = useState<NetworkOverview | null>(null);
+  const [data, setData] = useState<ProfitabilityData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,10 +32,9 @@ export default function ProfitabilityPage() {
     async function load() {
       setLoading(true);
       setError(null);
-
       try {
-        const data = await fetchNetworkOverview(dateFrom, dateTo);
-        if (!cancelled) setOverview(data);
+        const result = await fetchProfitabilityData(dateFrom, dateTo);
+        if (!cancelled) setData(result);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Erreur inconnue");
       } finally {
@@ -45,7 +51,7 @@ export default function ProfitabilityPage() {
   if (error) {
     return (
       <div>
-        <Topbar title="Rentabilité" subtitle="Performance réelle par réseau et par pays" />
+        <Topbar title="Rentabilité" subtitle="Marge nette par pays — base livré + encaissé" />
         <div className="px-6 py-5">
           <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm">
             <AlertTriangle size={14} />
@@ -56,10 +62,10 @@ export default function ProfitabilityPage() {
     );
   }
 
-  if (loading || !overview) {
+  if (loading || !data) {
     return (
       <div>
-        <Topbar title="Rentabilité" subtitle="Performance réelle par réseau et par pays" />
+        <Topbar title="Rentabilité" subtitle="Marge nette par pays — base livré + encaissé" />
         <div className="px-6 flex items-center justify-center py-16 text-slate-400 gap-2">
           <Loader2 size={16} className="animate-spin" />
           <span className="text-sm">Chargement des données…</span>
@@ -68,157 +74,174 @@ export default function ProfitabilityPage() {
     );
   }
 
-  const networkRows = overview.networks.flatMap((net) =>
-    net.rows.map((row) => ({ network: net.network, currency: net.currency, ...row }))
-  );
-
-  const totalMetaSpend = overview.metaAds.reduce((s, r) => s + (r.spend ?? 0), 0);
-  const totalMetaLeads = overview.metaAds.reduce((s, r) => s + (r.leads ?? 0), 0);
-  const avgCpl = totalMetaLeads > 0 ? totalMetaSpend / totalMetaLeads : 0;
-
-  const totalLeads =
-    networkRows.reduce((s, r) => s + r.total_leads, 0) + (overview.shipsen.global?.total_orders_all ?? 0);
-  const totalConfirmed =
-    networkRows.reduce((s, r) => s + r.confirmes, 0) + (overview.shipsen.global?.total_confirmed_orders ?? 0);
-  const globalConfirmationRate = totalLeads > 0 ? Math.round((totalConfirmed / totalLeads) * 1000) / 10 : 0;
-
-  const sortedNetworkRows = [...networkRows].sort((a, b) => b.confirmes - a.confirmes);
+  const totalLivresMediaBuying = data.mediaBuying.reduce((s, r) => s + r.livres, 0);
+  const totalLivresAffiliates = data.affiliates.reduce((s, r) => s + r.deliveredOrders, 0);
+  const totalLivres = totalLivresMediaBuying + totalLivresAffiliates;
 
   return (
     <div>
-      <Topbar title="Rentabilité" subtitle="Performance réelle par réseau et par pays — devises jamais additionnées entre elles" />
+      <Topbar
+        title="Rentabilité"
+        subtitle="Marge nette par pays — base livré + encaissé, devises jamais additionnées entre pays"
+      />
 
       <div className="px-6 py-5 space-y-5">
-        {/* Summary */}
-        <div className="grid grid-cols-4 gap-4">
-          <Section title="Total commandes (tous réseaux)">
-            <p className="text-2xl font-semibold text-slate-900 mt-1">{totalLeads.toLocaleString("fr-FR")}</p>
+        {/* Métrique de tête */}
+        <div className="grid grid-cols-2 gap-4">
+          <Section title="Total livrées (tous canaux)">
+            <p className="text-3xl font-bold text-emerald-600 mt-2">{totalLivres.toLocaleString("fr-FR")}</p>
+            <p className="text-xs text-slate-500 mt-1">
+              {totalLivresMediaBuying.toLocaleString("fr-FR")} Media Buying Interne + {totalLivresAffiliates.toLocaleString("fr-FR")} Affiliés
+            </p>
           </Section>
-          <Section title="Total confirmées">
-            <p className="text-2xl font-semibold text-emerald-600 mt-1">{totalConfirmed.toLocaleString("fr-FR")}</p>
-          </Section>
-          <Section title="Taux de confirmation global">
-            <p className="text-2xl font-semibold text-slate-900 mt-1">{globalConfirmationRate}%</p>
-          </Section>
-          <Section title="Dépense Meta Ads">
-            <p className="text-2xl font-semibold text-slate-900 mt-1">{fmtUSD(totalMetaSpend)}</p>
-            <p className="text-xs text-slate-500 mt-1">CPL moyen ${avgCpl.toFixed(2)}</p>
+          <Section title="CA livré encaissé par pays (Media Buying Interne)">
+            <div className="space-y-1 mt-2">
+              {data.mediaBuying.map((r) => (
+                <p key={r.countryName} className="text-sm text-slate-700">
+                  <span className="mr-1">{COUNTRY_FLAGS[r.countryName] ?? "🌍"}</span>
+                  {r.countryName} : <span className="font-semibold text-slate-900">{fmtCurrency(r.caLivre, r.currency)}</span>
+                </p>
+              ))}
+            </div>
           </Section>
         </div>
 
-        {/* Meta Ads spend by country */}
-        <Section title="Dépense publicitaire Meta Ads par pays">
+        {/* ═══ MEDIA BUYING INTERNE ═══ */}
+        <Section
+          title="Media Buying Interne · marge par pays"
+          titleRight={<Badge variant="blue">marge = revenu net livraison − ad spend − COGS − call center − retours</Badge>}
+        >
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-slate-200">
-                  {["Pays", "Spend", "Leads", "CPL", "CTR"].map((h) => (
-                    <th key={h} className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">{h}</th>
-                  ))}
+                  {["Pays", "Livrées", "CA livré encaissé", "Frais livraison (local)", "Ad spend (converti)", "Marge nette", "PPDO"].map(
+                    (h) => (
+                      <th key={h} className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">
+                        {h}
+                      </th>
+                    )
+                  )}
                 </tr>
               </thead>
               <tbody>
-                {[...overview.metaAds].sort((a, b) => b.spend - a.spend).map((row) => (
-                  <tr key={row.country} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                {data.mediaBuying.map((r) => (
+                  <tr key={r.countryName} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                     <td className="px-3 py-3">
                       <div className="flex items-center gap-2 font-medium text-slate-900">
-                        <span className="text-base">{COUNTRY_FLAGS[row.country] ?? "🌍"}</span>
-                        {row.country}
+                        <span className="text-base">{COUNTRY_FLAGS[r.countryName] ?? "🌍"}</span>
+                        {r.countryName}
                       </div>
                     </td>
-                    <td className="px-3 py-3 text-slate-700">{fmtUSD(row.spend)}</td>
-                    <td className="px-3 py-3 font-semibold text-emerald-600">{Math.round(row.leads).toLocaleString("fr-FR")}</td>
-                    <td className="px-3 py-3 text-slate-700">${row.cpl?.toFixed(2) ?? "—"}</td>
+                    <td className="px-3 py-3 text-slate-700">{r.livres.toLocaleString("fr-FR")}</td>
+                    <td className="px-3 py-3 font-medium text-slate-900">{fmtCurrency(r.caLivre, r.currency)}</td>
+                    <td className="px-3 py-3 text-slate-700">{fmtCurrency(r.margin.fraisLivraisonTotal, r.currency)}</td>
+                    <td className="px-3 py-3 text-slate-700">
+                      {fmtCurrency(r.adSpendLocal, r.currency)}
+                      {!r.adSpendKnown && (
+                        <span
+                          title="Aucune dépense Meta Ads trouvée pour ce pays sur la période — 0 réel, pas un trou de source (Meta Ads ne cible pas forcément tous les pays COD)."
+                          className="inline-flex ml-1.5 text-slate-400 cursor-help align-middle"
+                        >
+                          <Info size={10} />
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-3 font-semibold">
+                      {r.margin.margeNette != null ? (
+                        <span className={r.margin.margeNette >= 0 ? "text-emerald-600" : "text-red-600"}>
+                          {fmtCurrency(r.margin.margeNette, r.currency)}
+                        </span>
+                      ) : (
+                        <GapCell missingFields={r.margin.missingFields} />
+                      )}
+                    </td>
                     <td className="px-3 py-3">
-                      <Badge variant={row.ctr >= 6.5 ? "green" : row.ctr >= 5 ? "yellow" : "red"}>
-                        {row.ctr?.toFixed(2) ?? "0.00"}%
-                      </Badge>
+                      {r.margin.ppdo != null ? (
+                        <span className="text-slate-900">{fmtCurrency(r.margin.ppdo, r.currency)}</span>
+                      ) : (
+                        <GapCell missingFields={r.margin.missingFields} />
+                      )}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          <p className="text-xs text-slate-400 mt-3">
+            Hypothèse : les 4 réseaux COD (ClickMarket, Coliscod Angola, Africod Congo, Shipsen) sont rattachés à Media Buying
+            Interne car ce sont eux qui livrent les leads générés par Meta Ads — aucune colonne &ldquo;source d&apos;acquisition&rdquo; ne
+            distingue aujourd&apos;hui les commandes par canal dans ces tables.
+          </p>
+          {data.outOfScopeAdSpend.length > 0 && (
+            <p className="text-xs text-amber-600 mt-2">
+              Dépense Meta Ads hors périmètre COD (pas de market_settings, donc pas de FX/marge possible) :{" "}
+              {data.outOfScopeAdSpend.map((o) => `${o.country} ($${o.spendUsd.toFixed(0)})`).join(", ")}
+            </p>
+          )}
         </Section>
 
-        {/* COD networks performance */}
-        <Section title="Performance par réseau COD · ClickMarket, Coliscod Angola, Africod Congo">
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-slate-200">
-                  {["Réseau", "Pays", "Commandes", "Confirmées", "Taux confirmation", "Livrées", "Taux livraison", "CA livré"].map((h) => (
-                    <th key={h} className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {sortedNetworkRows.map((row) => (
-                  <tr key={`${row.network}-${row.country_id}`} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                    <td className="px-3 py-3 text-slate-700">{row.network}</td>
-                    <td className="px-3 py-3">
-                      <div className="flex items-center gap-2 font-medium text-slate-900">
-                        <span className="text-base">{COUNTRY_FLAGS[row.country_name] ?? "🌍"}</span>
-                        {row.country_name}
-                      </div>
-                    </td>
-                    <td className="px-3 py-3 text-slate-500">{row.total_leads.toLocaleString("fr-FR")}</td>
-                    <td className="px-3 py-3 font-semibold text-emerald-600">{row.confirmes.toLocaleString("fr-FR")}</td>
-                    <td className="px-3 py-3">
-                      <Badge variant={(row.taux_confirmation ?? 0) >= 50 ? "green" : (row.taux_confirmation ?? 0) >= 30 ? "yellow" : "red"}>
-                        {row.taux_confirmation ?? 0}%
-                      </Badge>
-                    </td>
-                    <td className="px-3 py-3 text-slate-700">{row.livres.toLocaleString("fr-FR")}</td>
-                    <td className="px-3 py-3">
-                      <Badge variant={(row.taux_livraison ?? 0) >= 70 ? "green" : (row.taux_livraison ?? 0) >= 50 ? "yellow" : "red"}>
-                        {row.taux_livraison ?? 0}%
-                      </Badge>
-                    </td>
-                    <td className="px-3 py-3 text-slate-700">{fmtCurrency(row.ca_livre, row.currency)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Section>
-
-        {/* Shipsen */}
-        {overview.shipsen.byCountry.length > 0 && (
-          <Section title="Performance Shipsen par pays">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-slate-200">
-                    {["Pays", "Commandes", "Confirmées", "Taux confirmation", "Revenus confirmés"].map((h) => (
-                      <th key={h} className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {overview.shipsen.byCountry.map((row) => (
-                    <tr key={row.country} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                      <td className="px-3 py-3">
-                        <div className="flex items-center gap-2 font-medium text-slate-900">
-                          <span className="text-base">{COUNTRY_FLAGS[row.country] ?? "🌍"}</span>
-                          {row.country}
-                        </div>
-                      </td>
-                      <td className="px-3 py-3 text-slate-500">{row.total_orders.toLocaleString("fr-FR")}</td>
-                      <td className="px-3 py-3 font-semibold text-emerald-600">{row.confirmed_orders.toLocaleString("fr-FR")}</td>
-                      <td className="px-3 py-3">
-                        <Badge variant={(row.confirmation_rate ?? 0) >= 50 ? "green" : (row.confirmation_rate ?? 0) >= 30 ? "yellow" : "red"}>
-                          {row.confirmation_rate ?? 0}%
-                        </Badge>
-                      </td>
-                      <td className="px-3 py-3 text-slate-700">{fmtCurrency(row.revenue_confirmed, row.currency)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        {/* ═══ AFFILIÉS ═══ */}
+        <Section
+          title="Affiliés (CRM Voralis) · marge par réseau"
+          titleRight={<Badge variant="yellow">marge = revenu net livraison − payout − COGS − call center − retours</Badge>}
+        >
+          {data.affiliatesError && (
+            <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm mb-3">
+              <AlertTriangle size={14} />
+              {data.affiliatesError}
             </div>
-          </Section>
-        )}
+          )}
+          <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs mb-3">
+            <Info size={14} className="shrink-0 mt-0.5" />
+            <p>
+              L&apos;API CRM Voralis ne renvoie ni pays, ni devise, ni CA par réseau affilié — seulement des comptages de
+              commandes et un payout global. Impossible de calculer un revenu net de livraison ou une marge tant que ces deux
+              dépendances (CA livré + payout par pays/devise) ne sont pas branchées depuis le CRM (prévu séparément).
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-slate-200">
+                  {["Réseau", "Commandes", "Confirmées", "Livrées", "Payout total (devise non précisée)", "CA livré encaissé", "Marge nette"].map(
+                    (h) => (
+                      <th key={h} className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">
+                        {h}
+                      </th>
+                    )
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {data.affiliates.map((r) => (
+                  <tr key={r.networkName} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                    <td className="px-3 py-3 font-medium text-slate-900">{r.networkName}</td>
+                    <td className="px-3 py-3 text-slate-500">{r.totalOrders.toLocaleString("fr-FR")}</td>
+                    <td className="px-3 py-3 font-semibold text-emerald-600">{r.confirmedOrders.toLocaleString("fr-FR")}</td>
+                    <td className="px-3 py-3 text-slate-700">{r.deliveredOrders.toLocaleString("fr-FR")}</td>
+                    <td className="px-3 py-3 text-slate-700">
+                      {r.totalPayout != null ? r.totalPayout.toLocaleString("fr-FR") : <GapCell missingFields={["payout"]} />}
+                    </td>
+                    <td className="px-3 py-3">
+                      <GapCell missingFields={["CA livré encaissé (non exposé par le CRM)"]} />
+                    </td>
+                    <td className="px-3 py-3">
+                      <GapCell missingFields={["CA livré", "pays/devise", "COGS", "call center", "retours"]} />
+                    </td>
+                  </tr>
+                ))}
+                {data.affiliates.length === 0 && !data.affiliatesError && (
+                  <tr>
+                    <td colSpan={7} className="px-3 py-4 text-center text-slate-500">
+                      Aucun réseau affilié pour cette période.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Section>
       </div>
     </div>
   );

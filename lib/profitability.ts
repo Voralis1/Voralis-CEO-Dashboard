@@ -1,0 +1,151 @@
+import { PROVIDERS } from "@/lib/providerKpi";
+import { fetchMetaAdsByCountry } from "@/lib/supabase/queries";
+import { fetchMarketSettings, type MarketSettings } from "@/lib/marketSettings";
+import { computeBaseMargin, finalizeMargin, type MarginBreakdown } from "@/lib/margin";
+import { getCanonicalCountry } from "@/lib/countries";
+
+// "Media Buying Interne" = les 4 réseaux COD (ClickMarket/Coliscod/Africod Congo/Shipsen),
+// dont l'acquisition est aujourd'hui portée par Meta Ads (pas d'affiliés dans cette base).
+// Hypothèse de travail à confirmer : si un jour un réseau COD est alimenté par un canal
+// d'acquisition distinct, il faudra une colonne "source" dans les tables *_leads/*_orders
+// pour ne plus la déduire implicitement ici.
+export interface MediaBuyingCountryRow {
+  countryName: string;
+  currency: string;
+  livres: number;
+  caLivre: number;
+  adSpendLocal: number;
+  adSpendKnown: boolean; // false = pas de ligne meta_ads pour ce pays (0 par défaut, pas un trou)
+  margin: MarginBreakdown;
+}
+
+export interface OutOfScopeAdSpend {
+  country: string; // nom brut tel que renvoyé par meta_ads_by_country
+  spendUsd: number;
+}
+
+// CRM Voralis (affiliés marketing) — aucune donnée de CA/pays/devise exposée par l'API
+// aujourd'hui, seulement des comptages + un payout global. Trou de source assumé (Prompt 5
+// branchera le vrai CA par affilié depuis le CRM).
+export interface AffiliateNetworkRow {
+  networkName: string;
+  totalOrders: number;
+  confirmedOrders: number;
+  deliveredOrders: number;
+  totalPayout: number | null;
+}
+
+export interface ProfitabilityData {
+  mediaBuying: MediaBuyingCountryRow[];
+  outOfScopeAdSpend: OutOfScopeAdSpend[];
+  affiliates: AffiliateNetworkRow[];
+  affiliatesError: string | null;
+}
+
+// Agrège les 4 réseaux COD par pays canonique — réutilisé par /profitability (Media Buying
+// Interne) et /ceo (cash encaissé), pour ne pas dupliquer cette logique entre les deux écrans.
+export async function aggregateCodNetworksByCountry(
+  dateFrom: string,
+  dateTo: string
+): Promise<Map<string, { livres: number; caLivre: number }>> {
+  const providerRowsByNetwork = await Promise.all(
+    Object.keys(PROVIDERS).map((id) => PROVIDERS[id as keyof typeof PROVIDERS].fetchRows(dateFrom, dateTo))
+  );
+
+  const aggregated = new Map<string, { livres: number; caLivre: number }>();
+  for (const rows of providerRowsByNetwork) {
+    for (const row of rows) {
+      const entry = aggregated.get(row.countryName) ?? { livres: 0, caLivre: 0 };
+      entry.livres += row.livres;
+      entry.caLivre += row.caLivre;
+      aggregated.set(row.countryName, entry);
+    }
+  }
+  return aggregated;
+}
+
+// Dépense Meta Ads par pays canonique (USD, devise native de la source) — réutilisé par
+// /profitability et /ceo (Cash Out). Les pays hors périmètre COD (pas de market_settings, ex.
+// Maroc/BF) sont renvoyés à part : pas de FX possible, jamais mélangés au calcul par pays.
+export function aggregateAdSpendByCountry(metaAdsRows: { country: string; spend: number }[]): {
+  byCountry: Map<string, number>;
+  outOfScope: OutOfScopeAdSpend[];
+} {
+  const byCountry = new Map<string, number>();
+  const outOfScopeAgg = new Map<string, number>();
+  for (const row of metaAdsRows) {
+    const canonical = getCanonicalCountry(row.country);
+    if (!canonical) {
+      outOfScopeAgg.set(row.country, (outOfScopeAgg.get(row.country) ?? 0) + (row.spend ?? 0));
+      continue;
+    }
+    byCountry.set(canonical.name, (byCountry.get(canonical.name) ?? 0) + (row.spend ?? 0));
+  }
+  const outOfScope = [...outOfScopeAgg].map(([country, spendUsd]) => ({ country, spendUsd }));
+  return { byCountry, outOfScope };
+}
+
+async function fetchAffiliateNetworks(dateFrom: string, dateTo: string): Promise<{ rows: AffiliateNetworkRow[]; error: string | null }> {
+  try {
+    const res = await fetch(`/api/networks?dateFrom=${dateFrom}&dateTo=${dateTo}`);
+    const json = await res.json();
+    if (!json.success) return { rows: [], error: json.message ?? "Erreur CRM Voralis" };
+
+    const rows: AffiliateNetworkRow[] = (json.networks ?? []).map(
+      (n: { name: string; stats: { total_orders: number; confirmed_orders: number; delivered_orders: number; total_payout: number } }) => ({
+        networkName: n.name,
+        totalOrders: n.stats.total_orders,
+        confirmedOrders: n.stats.confirmed_orders,
+        deliveredOrders: n.stats.delivered_orders,
+        // total_payout existe côté API mais sans devise précisée — on le garde affiché tel
+        // quel (pas un trou de source au sens strict), le vrai trou est l'absence de CA.
+        totalPayout: n.stats.total_payout ?? null,
+      })
+    );
+    return { rows, error: null };
+  } catch (err) {
+    return { rows: [], error: err instanceof Error ? err.message : "Impossible de contacter le CRM Voralis." };
+  }
+}
+
+export async function fetchProfitabilityData(dateFrom: string, dateTo: string): Promise<ProfitabilityData> {
+  const [aggregated, marketSettingsList, metaAdsRows, affiliates] = await Promise.all([
+    aggregateCodNetworksByCountry(dateFrom, dateTo),
+    fetchMarketSettings(),
+    fetchMetaAdsByCountry(),
+    fetchAffiliateNetworks(dateFrom, dateTo),
+  ]);
+
+  const marketSettingsByPays = new Map<string, MarketSettings>(marketSettingsList.map((s) => [s.pays, s]));
+  const { byCountry: adSpendByCanonicalCountry, outOfScope: outOfScopeAdSpend } = aggregateAdSpendByCountry(metaAdsRows);
+
+  const mediaBuying: MediaBuyingCountryRow[] = [];
+  for (const [countryName, { livres, caLivre }] of aggregated) {
+    const settings = marketSettingsByPays.get(countryName);
+    if (!settings) continue; // pas de market_settings pour ce pays — ne devrait pas arriver (7 pays couverts)
+
+    const adSpendUsd = adSpendByCanonicalCountry.get(countryName) ?? 0;
+    const adSpendKnown = adSpendByCanonicalCountry.has(countryName);
+    const adSpendLocal = adSpendUsd * settings.fx_to_usd;
+
+    const base = computeBaseMargin(livres, caLivre, settings);
+    const margin = finalizeMargin(base, livres, adSpendLocal, "ad spend");
+
+    mediaBuying.push({
+      countryName,
+      currency: settings.devise_locale,
+      livres,
+      caLivre,
+      adSpendLocal,
+      adSpendKnown,
+      margin,
+    });
+  }
+
+  return {
+    mediaBuying: mediaBuying.sort((a, b) => b.caLivre - a.caLivre),
+    outOfScopeAdSpend,
+    affiliates: affiliates.rows,
+    affiliatesError: affiliates.error,
+  };
+}

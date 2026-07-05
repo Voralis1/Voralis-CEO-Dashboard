@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { getCountryCurrency } from "@/lib/countries";
 
 export interface NetworkKpiRow {
   country_id: number;
@@ -9,6 +10,7 @@ export interface NetworkKpiRow {
   livres: number;
   taux_livraison: number | null;
   ca_livre: number;
+  currency: string;
 }
 
 export interface MetaAdsRow {
@@ -35,13 +37,13 @@ export interface ShipsenCountryKpi {
   pending_orders: number;
 }
 
-// Chaque réseau a sa propre devise (voir les commentaires dans les schémas SQL) —
-// on ne les additionne jamais entre eux, seulement au sein d'un même réseau/devise.
-const NETWORK_CURRENCY: Record<string, string> = {
-  ClickMarket: "AOA",
-  "Coliscod Angola": "AOA",
-  "Africod Congo": "XAF",
-};
+// La devise se dérive du pays réel de chaque ligne (lib/countries.ts), jamais d'une
+// constante par réseau : ClickMarket est multi-pays (ex. Gabon = XAF) et assigner une
+// devise unique au réseau entier reproduisait le bug "Gabon affiché en AOA" (devise
+// de l'Angola). On ne les additionne jamais entre eux, seulement au sein d'un même pays/devise.
+function attachCurrency(rows: Omit<NetworkKpiRow, "currency">[]): NetworkKpiRow[] {
+  return rows.map((row) => ({ ...row, currency: getCountryCurrency(row.country_name) }));
+}
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -50,11 +52,13 @@ export async function GET(request: Request) {
 
   const [metaAdsRes, clickmarketRes, coliscodRes, africodCongoRes, shipsenByCountryRes, shipsenGlobalRes] =
     await Promise.all([
+      // meta_ads_by_country a une colonne `date` mais elle n'est jamais renseignée (table de
+      // snapshot cumulatif par pays/canal, pas une série temporelle) — filtrer dessus exclurait
+      // toutes les lignes. Pas de filtrage par période possible tant que la source n'expose pas
+      // de dimension temporelle réelle.
       supabaseAdmin
         .from("meta_ads_by_country")
-        .select("channel, country, spend, impressions, clicks, leads, cpl, ctr, date")
-        .gte("date", dateFrom)
-        .lte("date", dateTo),
+        .select("channel, country, spend, impressions, clicks, leads, cpl, ctr, date"),
       supabaseAdmin.rpc("kpi_clickmarket_marche_periode", { date_from: dateFrom, date_to: dateTo }),
       supabaseAdmin.rpc("kpi_coliscod_marche_periode", { date_from: dateFrom, date_to: dateTo }),
       supabaseAdmin.rpc("kpi_africod_congo_marche_periode", { date_from: dateFrom, date_to: dateTo }),
@@ -73,9 +77,9 @@ export async function GET(request: Request) {
   return Response.json({
     metaAds: (metaAdsRes.data ?? []) as MetaAdsRow[],
     networks: [
-      { network: "ClickMarket", currency: NETWORK_CURRENCY["ClickMarket"], rows: (clickmarketRes.data ?? []) as NetworkKpiRow[] },
-      { network: "Coliscod Angola", currency: NETWORK_CURRENCY["Coliscod Angola"], rows: (coliscodRes.data ?? []) as NetworkKpiRow[] },
-      { network: "Africod Congo", currency: NETWORK_CURRENCY["Africod Congo"], rows: (africodCongoRes.data ?? []) as NetworkKpiRow[] },
+      { network: "ClickMarket", rows: attachCurrency(clickmarketRes.data ?? []) },
+      { network: "Coliscod Angola", rows: attachCurrency(coliscodRes.data ?? []) },
+      { network: "Africod Congo", rows: attachCurrency(africodCongoRes.data ?? []) },
     ],
     shipsen: {
       byCountry: (shipsenByCountryRes.data ?? []) as ShipsenCountryKpi[],

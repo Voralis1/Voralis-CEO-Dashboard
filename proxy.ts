@@ -3,6 +3,11 @@ import { createServerClient } from "@supabase/ssr";
 
 const PUBLIC_ROUTES = ["/login"];
 
+// Réservé au rôle CEO : contient/pilote COGS, coût call center, marge plancher T. Ceci est du
+// confort d'UX (éviter d'atterrir sur un écran vide/en erreur) — la vraie protection est côté
+// API (GET/PATCH /api/market-settings vérifient le rôle indépendamment, cf. lib/auth/role.ts).
+const CEO_ONLY_ROUTES = ["/ceo/market-settings"];
+
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
@@ -39,6 +44,12 @@ export async function proxy(request: NextRequest) {
   }
 
   if (user && isPublicRoute) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/ceo";
+    return NextResponse.redirect(url);
+  }
+
+  if (user && CEO_ONLY_ROUTES.some((r) => path.startsWith(r)) && user.app_metadata?.role !== "ceo") {
     const url = request.nextUrl.clone();
     url.pathname = "/ceo";
     return NextResponse.redirect(url);

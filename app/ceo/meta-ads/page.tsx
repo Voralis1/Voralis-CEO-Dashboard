@@ -5,6 +5,7 @@ import { Section, Badge } from "@/components/ui";
 import { useFilters } from "@/lib/filters";
 import { fetchMetaAdsByCountry, MetaAdsCountryRow, diagnoseSupabaseConnection } from "@/lib/supabase/queries";
 import { fmtUSD } from "@/lib/data";
+import { COUNTRY_FLAGS } from "@/lib/countries";
 
 interface ProcessedMetaAdsData {
   country: string;
@@ -16,17 +17,6 @@ interface ProcessedMetaAdsData {
   cpl: number;
   ctr: number;
 }
-
-const COUNTRY_FLAGS: Record<string, string> = {
-  "Angola": "🇦🇴",
-  "Maroc": "🇲🇦",
-  "Sénégal": "🇸🇳",
-  "Côte d'Ivoire": "🇨🇮",
-  "Mali": "🇲🇱",
-  "Gabon": "🇬🇦",
-  "Guinée": "🇬🇳",
-  "Congo-Brazza": "🇨🇬",
-};
 
 export default function MetaAdsPage() {
   const { dateFrom, dateTo } = useFilters();
@@ -46,7 +36,7 @@ export default function MetaAdsPage() {
       try {
         console.log(`Fetching meta ads from ${dateFrom} to ${dateTo}`);
 
-        const rawData = await fetchMetaAdsByCountry(dateFrom, dateTo);
+        const rawData = await fetchMetaAdsByCountry();
         console.log("Raw data from Supabase:", rawData);
 
         if (!rawData || rawData.length === 0) {
@@ -141,6 +131,11 @@ export default function MetaAdsPage() {
       <Topbar title="Meta Ads" subtitle="Statistiques de publicité par pays — clicks, spend, impressions, leads" />
 
       <div className="px-6 py-5 space-y-5">
+        <p className="text-xs text-slate-400">
+          Totaux cumulés depuis le début du suivi — la source Meta Ads n&apos;a pas de dimension
+          temporelle, le sélecteur de dates ne s&apos;applique donc pas ici.
+        </p>
+
         {/* Meta Ads Stats Table */}
         <Section title="Performance Meta Ads par pays">
           <div className="overflow-x-auto">

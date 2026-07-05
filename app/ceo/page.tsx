@@ -1,71 +1,131 @@
 "use client";
 import { useEffect, useState } from "react";
 import Topbar from "@/components/layout/Topbar";
-import { Section, KpiCard } from "@/components/ui";
-import SpendChart from "@/components/charts/SpendChart";
+import { Section, Badge } from "@/components/ui";
 import { useFilters } from "@/lib/filters";
-import { fetchNetworkOverview, fmtCurrency, type NetworkOverview } from "@/lib/dashboardData";
-import { fmtUSD } from "@/lib/data";
+import { fmtCurrency } from "@/lib/dashboardData";
+import { COUNTRY_FLAGS } from "@/lib/countries";
+import { fetchPublicMarketSettings, type PublicMarketSettings } from "@/lib/marketSettings";
+import { fetchTreasuryCashData, type TreasuryCashData } from "@/lib/treasury";
 import {
-  ArrowDownCircle, ArrowUpCircle, DollarSign,
-  TrendingUp, Users, Truck, AlertTriangle, Loader2,
-} from "lucide-react";
+  fetchCashHoldings,
+  createCashHolding,
+  deleteCashHolding,
+  createCashOutManual,
+  deleteCashOutManual,
+  type CashHolding,
+} from "@/lib/cashOps";
+import { AlertTriangle, Loader2, Plus, Trash2, Info } from "lucide-react";
 
-const COUNTRY_FLAGS: Record<string, string> = {
-  Angola: "🇦🇴", Maroc: "🇲🇦", Sénégal: "🇸🇳", "Côte d'Ivoire": "🇨🇮", Mali: "🇲🇱",
-  Gabon: "🇬🇦", Guinée: "🇬🇳", "Congo-Brazza": "🇨🇬", Congo: "🇨🇬", Senegal: "🇸🇳",
-  "Cote d'Ivoire": "🇨🇮", Guinea: "🇬🇳",
+const STATUT_LABELS: Record<CashHolding["statut_rapatriement"], { label: string; variant: "yellow" | "blue" | "green" }> = {
+  en_attente: { label: "En attente", variant: "yellow" },
+  en_cours: { label: "En cours", variant: "blue" },
+  rapatrie: { label: "Rapatrié", variant: "green" },
 };
-
-const SPEND_COLORS = ["#378add", "#1d9e75", "#c9a227", "#ef9f27", "#888780", "#e24b4a"];
 
 export default function TresoreriePage() {
   const { dateFrom, dateTo } = useFilters();
-  const [overview, setOverview] = useState<NetworkOverview | null>(null);
+  const [marketSettings, setMarketSettings] = useState<PublicMarketSettings[]>([]);
+  const [cashData, setCashData] = useState<TreasuryCashData | null>(null);
+  const [holdings, setHoldings] = useState<CashHolding[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [holdingForm, setHoldingForm] = useState({ entite: "", pays: "", montant_detenu: "", date_derniere_remise: "", statut_rapatriement: "en_attente" as CashHolding["statut_rapatriement"] });
+  const [holdingSaving, setHoldingSaving] = useState(false);
+
+  const [cashOutForm, setCashOutForm] = useState({ type: "salaire_local" as "salaire_local" | "autre", pays: "", montant: "", description: "", date: new Date().toISOString().split("T")[0] });
+  const [cashOutSaving, setCashOutSaving] = useState(false);
+
+  async function loadAll() {
+    setLoading(true);
+    setError(null);
+    try {
+      const [settings, cash, holdingsList] = await Promise.all([
+        fetchPublicMarketSettings(),
+        fetchTreasuryCashData(dateFrom, dateTo),
+        fetchCashHoldings(),
+      ]);
+      setMarketSettings(settings);
+      setCashData(cash);
+      setHoldings(holdingsList);
+      setHoldingForm((f) => ({ ...f, pays: f.pays || settings[0]?.pays || "" }));
+      setCashOutForm((f) => ({ ...f, pays: f.pays || settings[0]?.pays || "" }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur inconnue");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
-
-    async function load() {
-      setLoading(true);
-      setError(null);
-
-      try {
-        const data = await fetchNetworkOverview(dateFrom, dateTo);
-        if (!cancelled) setOverview(data);
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Erreur inconnue");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-
-    load();
+    (async () => {
+      if (!cancelled) await loadAll();
+    })();
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dateFrom, dateTo]);
 
-  if (error) {
-    return (
-      <div>
-        <Topbar title="Trésorerie" subtitle="Combien rentre, combien sort — par réseau et par pays" />
-        <div className="px-6 py-5">
-          <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm">
-            <AlertTriangle size={14} />
-            {error}
-          </div>
-        </div>
-      </div>
-    );
+  const currencyByPays = new Map(marketSettings.map((s) => [s.pays, s.devise_locale]));
+
+  async function handleAddHolding() {
+    if (!holdingForm.entite || !holdingForm.pays || !holdingForm.montant_detenu) return;
+    setHoldingSaving(true);
+    setError(null);
+    try {
+      const created = await createCashHolding({
+        entite: holdingForm.entite,
+        pays: holdingForm.pays,
+        montant_detenu: Number(holdingForm.montant_detenu),
+        date_derniere_remise: holdingForm.date_derniere_remise || null,
+        statut_rapatriement: holdingForm.statut_rapatriement,
+      });
+      setHoldings((prev) => [...prev, created]);
+      setHoldingForm((f) => ({ ...f, entite: "", montant_detenu: "", date_derniere_remise: "" }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur inconnue");
+    } finally {
+      setHoldingSaving(false);
+    }
   }
 
-  if (loading || !overview) {
+  async function handleDeleteHolding(id: string) {
+    try {
+      await deleteCashHolding(id);
+      setHoldings((prev) => prev.filter((h) => h.id !== id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur inconnue");
+    }
+  }
+
+  async function handleAddCashOut() {
+    if (!cashOutForm.pays || !cashOutForm.montant || !cashOutForm.date) return;
+    setCashOutSaving(true);
+    setError(null);
+    try {
+      await createCashOutManual({
+        type: cashOutForm.type,
+        pays: cashOutForm.pays,
+        montant: Number(cashOutForm.montant),
+        description: cashOutForm.description || null,
+        date: cashOutForm.date,
+      });
+      setCashOutForm((f) => ({ ...f, montant: "", description: "" }));
+      await loadAll(); // recharge l'agrégat cash out par pays
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur inconnue");
+    } finally {
+      setCashOutSaving(false);
+    }
+  }
+
+  if (loading || !cashData) {
     return (
       <div>
-        <Topbar title="Trésorerie" subtitle="Combien rentre, combien sort — par réseau et par pays" />
+        <Topbar title="Trésorerie" subtitle="Cash encaissé, cash détenu, cash sorti — par pays, base livré + encaissé" />
         <div className="px-6 flex items-center justify-center py-16 text-slate-400 gap-2">
           <Loader2 size={16} className="animate-spin" />
           <span className="text-sm">Chargement des données…</span>
@@ -74,144 +134,323 @@ export default function TresoreriePage() {
     );
   }
 
-  const networkRows = overview.networks.flatMap((net) =>
-    net.rows.map((row) => ({ network: net.network, currency: net.currency, ...row }))
-  );
-
-  const totalMetaSpend = overview.metaAds.reduce((s, r) => s + (r.spend ?? 0), 0);
-  const totalMetaLeads = overview.metaAds.reduce((s, r) => s + (r.leads ?? 0), 0);
-  const avgCpl = totalMetaLeads > 0 ? totalMetaSpend / totalMetaLeads : 0;
-
-  const totalOrders =
-    networkRows.reduce((s, r) => s + r.total_leads, 0) + (overview.shipsen.global?.total_orders_all ?? 0);
-  const totalConfirmed =
-    networkRows.reduce((s, r) => s + r.confirmes, 0) + (overview.shipsen.global?.total_confirmed_orders ?? 0);
-  const globalConfirmationRate = totalOrders > 0 ? Math.round((totalConfirmed / totalOrders) * 1000) / 10 : 0;
-
-  const rowsWithDeliveryRate = networkRows.filter((r) => r.taux_livraison != null);
-  const avgDeliveryRate =
-    rowsWithDeliveryRate.length > 0
-      ? Math.round(rowsWithDeliveryRate.reduce((s, r) => s + (r.taux_livraison ?? 0), 0) / rowsWithDeliveryRate.length)
-      : 0;
-
-  const spendByCountryMap = new Map<string, number>();
-  for (const row of overview.metaAds) {
-    spendByCountryMap.set(row.country, (spendByCountryMap.get(row.country) ?? 0) + row.spend);
-  }
-  const spendByCountry = [...spendByCountryMap.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([name, value], i) => ({ name, value, color: SPEND_COLORS[i % SPEND_COLORS.length] }));
-
-  // Revenus confirmés par réseau, groupés par pays — jamais additionnés entre devises différentes.
-  const revenueRows = [
-    ...networkRows.map((r) => ({ network: r.network, country: r.country_name, currency: r.currency, revenue: r.ca_livre })),
-    ...overview.shipsen.byCountry.map((r) => ({ network: "Shipsen", country: r.country, currency: r.currency, revenue: r.revenue_confirmed })),
-  ].sort((a, b) => b.revenue - a.revenue);
-
   return (
     <div>
       <Topbar
         title="Trésorerie"
-        subtitle="Combien rentre, combien sort — par réseau et par pays (devises non additionnées)"
+        subtitle="Cash encaissé, cash détenu, cash sorti — par pays, base livré + encaissé, devises jamais additionnées"
       />
 
       <div className="px-6 py-5 space-y-5">
-        {/* Cash hero */}
-        <div className="grid grid-cols-2 gap-4">
-          <div className="rounded-xl p-5 border" style={{ background: "#ecfdf5", borderColor: "#1d9e75" }}>
-            <div className="flex items-center gap-2 mb-3">
-              <ArrowDownCircle size={16} className="text-emerald-600" />
-              <span className="text-xs font-semibold text-emerald-600 uppercase tracking-wide">Cash IN</span>
+        {error && (
+          <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm">
+            <AlertTriangle size={14} />
+            {error}
+          </div>
+        )}
+
+        {/* ═══ Cash encaissé par pays ═══ */}
+        <Section title="Cash encaissé par pays">
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-slate-200">
+                  {["Pays", "Livrées", "CA livré encaissé", "Frais livraison (local)", "Cash encaissé"].map((h) => (
+                    <th key={h} className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {cashData.cashByCountry.map((r) => (
+                  <tr key={r.countryName} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                    <td className="px-3 py-3">
+                      <div className="flex items-center gap-2 font-medium text-slate-900">
+                        <span className="text-base">{COUNTRY_FLAGS[r.countryName] ?? "🌍"}</span>
+                        {r.countryName}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 text-slate-700">{r.livres.toLocaleString("fr-FR")}</td>
+                    <td className="px-3 py-3 text-slate-700">{fmtCurrency(r.caLivre, r.currency)}</td>
+                    <td className="px-3 py-3 text-slate-500">−{fmtCurrency(r.fraisLivraisonTotal, r.currency)}</td>
+                    <td className="px-3 py-3 font-semibold text-emerald-600">{fmtCurrency(r.cashEncaisse, r.currency)}</td>
+                  </tr>
+                ))}
+                {cashData.cashByCountry.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-3 py-4 text-center text-slate-500">Aucune commande livrée sur cette période.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Section>
+
+        {/* ═══ Cash chez qui ═══ */}
+        <Section title="Cash chez qui · cash détenu, pas encore rapatrié">
+          <div className="overflow-x-auto mb-4">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-slate-200">
+                  {["Entité", "Pays", "Devise", "Montant détenu", "Dernière remise", "Statut", ""].map((h) => (
+                    <th key={h} className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {holdings.map((h) => {
+                  const statut = STATUT_LABELS[h.statut_rapatriement];
+                  return (
+                    <tr key={h.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                      <td className="px-3 py-3 font-medium text-slate-900">{h.entite}</td>
+                      <td className="px-3 py-3">
+                        <span className="flex items-center gap-1.5">
+                          <span className="text-base">{COUNTRY_FLAGS[h.pays] ?? "🌍"}</span>
+                          {h.pays}
+                        </span>
+                      </td>
+                      <td className="px-3 py-3 text-slate-500">{currencyByPays.get(h.pays) ?? "—"}</td>
+                      <td className="px-3 py-3 font-semibold text-slate-900">
+                        {fmtCurrency(h.montant_detenu, currencyByPays.get(h.pays) ?? "")}
+                      </td>
+                      <td className="px-3 py-3 text-slate-500">{h.date_derniere_remise ?? "—"}</td>
+                      <td className="px-3 py-3">
+                        <Badge variant={statut.variant}>{statut.label}</Badge>
+                      </td>
+                      <td className="px-3 py-3">
+                        <button onClick={() => handleDeleteHolding(h.id)} className="text-slate-400 hover:text-red-600 transition-colors">
+                          <Trash2 size={14} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {holdings.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="px-3 py-4 text-center text-slate-500">
+                      Aucune donnée saisie — ajoute une entrée ci-dessous.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex flex-wrap items-end gap-2 p-3 rounded-lg bg-slate-50 border border-slate-200">
+            <div>
+              <label className="block text-[10px] text-slate-500 mb-1">Entité</label>
+              <input
+                value={holdingForm.entite}
+                onChange={(e) => setHoldingForm((f) => ({ ...f, entite: e.target.value }))}
+                placeholder="ex. Motoboy Angola - João"
+                className="px-2 py-1.5 text-xs bg-white border border-slate-300 rounded-md w-48"
+              />
             </div>
-            <p className="text-2xl font-semibold text-emerald-700">{totalConfirmed.toLocaleString("fr-FR")} commandes confirmées</p>
-            <p className="text-xs text-emerald-600 mt-1.5">
-              Revenus par réseau/pays ci-dessous — chaque devise reste séparée, jamais additionnée.
+            <div>
+              <label className="block text-[10px] text-slate-500 mb-1">Pays</label>
+              <select
+                value={holdingForm.pays}
+                onChange={(e) => setHoldingForm((f) => ({ ...f, pays: e.target.value }))}
+                className="px-2 py-1.5 text-xs bg-white border border-slate-300 rounded-md"
+              >
+                {marketSettings.map((s) => (
+                  <option key={s.pays} value={s.pays}>{s.pays}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] text-slate-500 mb-1">Montant détenu</label>
+              <input
+                type="number"
+                value={holdingForm.montant_detenu}
+                onChange={(e) => setHoldingForm((f) => ({ ...f, montant_detenu: e.target.value }))}
+                className="px-2 py-1.5 text-xs bg-white border border-slate-300 rounded-md w-28"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] text-slate-500 mb-1">Dernière remise</label>
+              <input
+                type="date"
+                value={holdingForm.date_derniere_remise}
+                onChange={(e) => setHoldingForm((f) => ({ ...f, date_derniere_remise: e.target.value }))}
+                className="px-2 py-1.5 text-xs bg-white border border-slate-300 rounded-md"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] text-slate-500 mb-1">Statut</label>
+              <select
+                value={holdingForm.statut_rapatriement}
+                onChange={(e) => setHoldingForm((f) => ({ ...f, statut_rapatriement: e.target.value as CashHolding["statut_rapatriement"] }))}
+                className="px-2 py-1.5 text-xs bg-white border border-slate-300 rounded-md"
+              >
+                <option value="en_attente">En attente</option>
+                <option value="en_cours">En cours</option>
+                <option value="rapatrie">Rapatrié</option>
+              </select>
+            </div>
+            <button
+              onClick={handleAddHolding}
+              disabled={holdingSaving}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors disabled:opacity-40"
+            >
+              {holdingSaving ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+              Ajouter
+            </button>
+          </div>
+        </Section>
+
+        {/* ═══ Cash Out ═══ */}
+        <Section title="Cash Out par pays">
+          <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 text-xs mb-3">
+            <Info size={14} className="shrink-0 mt-0.5" />
+            <p>
+              Payout affilié (colonne dédiée) inclus dans le total depuis le CRM Voralis — c&apos;est un montant <strong>accru</strong> sur
+              les commandes confirmées/livrées de la période, pas une date de décaissement réelle (le CRM n&apos;expose aucune
+              date de paiement affilié).
             </p>
           </div>
-
-          <div className="rounded-xl p-5 border" style={{ background: "#fef2f2", borderColor: "#e24b4a" }}>
-            <div className="flex items-center gap-2 mb-3">
-              <ArrowUpCircle size={16} className="text-red-600" />
-              <span className="text-xs font-semibold text-red-600 uppercase tracking-wide">Cash OUT</span>
+          {cashData.affiliatePayoutError && (
+            <div className="flex items-center gap-2 p-3 mb-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs">
+              <AlertTriangle size={12} />
+              CRM Voralis injoignable pour le payout affilié : {cashData.affiliatePayoutError}
             </div>
-            <p className="text-3xl font-semibold text-red-700">{fmtUSD(totalMetaSpend)}</p>
-            <p className="text-xs text-red-600 mt-1.5">Dépense publicitaire Meta Ads (seul coût réel suivi actuellement)</p>
+          )}
+          <div className="overflow-x-auto mb-4">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-slate-200">
+                  {["Pays", "Ad spend réel (converti)", "Salaires locaux", "Autre", "Payout affilié (CRM)", "Total"].map((h) => (
+                    <th key={h} className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {cashData.cashOutByCountry.map((r) => (
+                  <tr key={r.countryName} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                    <td className="px-3 py-3">
+                      <div className="flex items-center gap-2 font-medium text-slate-900">
+                        <span className="text-base">{COUNTRY_FLAGS[r.countryName] ?? "🌍"}</span>
+                        {r.countryName}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 text-slate-700">{fmtCurrency(r.adSpendLocal, r.currency)}</td>
+                    <td className="px-3 py-3 text-slate-700">{fmtCurrency(r.salaireLocal, r.currency)}</td>
+                    <td className="px-3 py-3 text-slate-700">{fmtCurrency(r.autre, r.currency)}</td>
+                    <td className="px-3 py-3 text-slate-700">{fmtCurrency(r.payoutAffilieLocal, r.currency)}</td>
+                    <td className="px-3 py-3 font-semibold text-red-600">{fmtCurrency(r.total, r.currency)}</td>
+                  </tr>
+                ))}
+                {cashData.cashOutByCountry.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-3 py-4 text-center text-slate-500">Aucune sortie de cash pour cette période.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
-        </div>
 
-        {/* Charts row */}
-        <div className="grid grid-cols-2 gap-4">
-          <Section title="Revenus confirmés par réseau et par pays">
-            <div className="overflow-x-auto">
+          <div className="flex flex-wrap items-end gap-2 p-3 rounded-lg bg-slate-50 border border-slate-200">
+            <div>
+              <label className="block text-[10px] text-slate-500 mb-1">Type</label>
+              <select
+                value={cashOutForm.type}
+                onChange={(e) => setCashOutForm((f) => ({ ...f, type: e.target.value as "salaire_local" | "autre" }))}
+                className="px-2 py-1.5 text-xs bg-white border border-slate-300 rounded-md"
+              >
+                <option value="salaire_local">Salaire local</option>
+                <option value="autre">Autre</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] text-slate-500 mb-1">Pays</label>
+              <select
+                value={cashOutForm.pays}
+                onChange={(e) => setCashOutForm((f) => ({ ...f, pays: e.target.value }))}
+                className="px-2 py-1.5 text-xs bg-white border border-slate-300 rounded-md"
+              >
+                {marketSettings.map((s) => (
+                  <option key={s.pays} value={s.pays}>{s.pays}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] text-slate-500 mb-1">Montant</label>
+              <input
+                type="number"
+                value={cashOutForm.montant}
+                onChange={(e) => setCashOutForm((f) => ({ ...f, montant: e.target.value }))}
+                className="px-2 py-1.5 text-xs bg-white border border-slate-300 rounded-md w-28"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] text-slate-500 mb-1">Description</label>
+              <input
+                value={cashOutForm.description}
+                onChange={(e) => setCashOutForm((f) => ({ ...f, description: e.target.value }))}
+                placeholder="optionnel"
+                className="px-2 py-1.5 text-xs bg-white border border-slate-300 rounded-md w-40"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] text-slate-500 mb-1">Date</label>
+              <input
+                type="date"
+                value={cashOutForm.date}
+                onChange={(e) => setCashOutForm((f) => ({ ...f, date: e.target.value }))}
+                className="px-2 py-1.5 text-xs bg-white border border-slate-300 rounded-md"
+              />
+            </div>
+            <button
+              onClick={handleAddCashOut}
+              disabled={cashOutSaving}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors disabled:opacity-40"
+            >
+              {cashOutSaving ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+              Ajouter
+            </button>
+          </div>
+
+          {cashData.cashOutManualEntries.length > 0 && (
+            <div className="overflow-x-auto mt-4">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-slate-200">
-                    {["Réseau", "Pays", "Revenus confirmés"].map((h) => (
+                    {["Type", "Pays", "Montant", "Description", "Date", ""].map((h) => (
                       <th key={h} className="text-left px-3 py-2 text-slate-500 font-medium whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {revenueRows.map((r) => (
-                    <tr key={`${r.network}-${r.country}`} className="border-b border-slate-100">
-                      <td className="px-3 py-2 text-slate-700">{r.network}</td>
+                  {cashData.cashOutManualEntries.map((e) => (
+                    <tr key={e.id} className="border-b border-slate-100">
+                      <td className="px-3 py-2 text-slate-700">{e.type === "salaire_local" ? "Salaire local" : "Autre"}</td>
+                      <td className="px-3 py-2 text-slate-700">{e.pays}</td>
+                      <td className="px-3 py-2 text-slate-700">{fmtCurrency(e.montant, currencyByPays.get(e.pays) ?? "")}</td>
+                      <td className="px-3 py-2 text-slate-500">{e.description ?? "—"}</td>
+                      <td className="px-3 py-2 text-slate-500">{e.date}</td>
                       <td className="px-3 py-2">
-                        <span className="flex items-center gap-2 font-medium text-slate-900">
-                          <span className="text-base">{COUNTRY_FLAGS[r.country] ?? "🌍"}</span>
-                          {r.country}
-                        </span>
+                        <button
+                          onClick={async () => {
+                            await deleteCashOutManual(e.id);
+                            await loadAll();
+                          }}
+                          className="text-slate-400 hover:text-red-600 transition-colors"
+                        >
+                          <Trash2 size={12} />
+                        </button>
                       </td>
-                      <td className="px-3 py-2 text-slate-700">{fmtCurrency(r.revenue, r.currency)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </Section>
+          )}
 
-          <Section title="Dépense Meta Ads par pays">
-            {spendByCountry.length > 0 ? (
-              <>
-                <SpendChart data={spendByCountry} />
-                <div className="flex flex-wrap items-center gap-3 mt-2">
-                  {spendByCountry.map(({ name, color }) => (
-                    <div key={name} className="flex items-center gap-1.5">
-                      <span className="w-2.5 h-2.5 rounded-sm" style={{ background: color }} />
-                      <span className="text-[10px] text-slate-500">{name}</span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <p className="text-sm text-slate-500">Aucune donnée Meta Ads pour cette période.</p>
-            )}
-          </Section>
-        </div>
-
-        {/* KPIs strip */}
-        <Section title="KPIs clés">
-          <div className="grid grid-cols-4 gap-3">
-            <KpiCard
-              label="Commandes confirmées"
-              value={totalConfirmed.toLocaleString("fr-FR")}
-              icon={<Users size={14} />}
-            />
-            <KpiCard
-              label="CPL moyen (Meta Ads)"
-              value={`$${avgCpl.toFixed(2)}`}
-              icon={<DollarSign size={14} />}
-            />
-            <KpiCard
-              label="Taux confirmation global"
-              value={`${globalConfirmationRate}%`}
-              icon={<TrendingUp size={14} />}
-            />
-            <KpiCard
-              label="Taux livraison moyen"
-              value={`${avgDeliveryRate}%`}
-              icon={<Truck size={14} />}
-            />
-          </div>
+          {cashData.outOfScopeAdSpend.length > 0 && (
+            <p className="text-xs text-amber-600 mt-3">
+              Dépense Meta Ads hors périmètre COD (pas de market_settings, non incluse ci-dessus) :{" "}
+              {cashData.outOfScopeAdSpend.map((o) => `${o.country} ($${o.spendUsd.toFixed(0)})`).join(", ")}
+            </p>
+          )}
         </Section>
       </div>
     </div>

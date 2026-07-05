@@ -2,7 +2,7 @@ import type { MetaAdsRow, NetworkKpiRow, ShipsenCountryKpi } from "@/app/api/net
 
 export interface NetworkOverview {
   metaAds: MetaAdsRow[];
-  networks: { network: string; currency: string; rows: NetworkKpiRow[] }[];
+  networks: { network: string; rows: NetworkKpiRow[] }[];
   shipsen: {
     byCountry: ShipsenCountryKpi[];
     global: { total_confirmed_orders: number; total_orders_all: number; global_confirmation_rate: number | null } | null;
