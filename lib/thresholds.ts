@@ -174,12 +174,15 @@ async function fetchCodAggregatesByCountry(dateFrom: string, dateTo: string): Pr
   return aggregated;
 }
 
-async function fetchAdMetricsByCountry(): Promise<Map<string, { spend: number; leads: number }>> {
-  // Pas de filtrage par date possible ici : meta_ads_by_country est un snapshot cumulatif
-  // (colonne `date` jamais renseignée, cf. lib/supabase/queries.ts) — le "CPL réel" du module
-  // Seuils reste donc cumulé tout historique, pas borné à la période sélectionnée. Signalé
-  // explicitement dans l'UI plutôt que de prétendre à un filtrage qui n'existe pas.
-  const { data } = await supabaseAdmin.from("meta_ads_by_country").select("country, spend, leads");
+async function fetchAdMetricsByCountry(dateFrom: string, dateTo: string): Promise<Map<string, { spend: number; leads: number }>> {
+  // meta_ads_by_country a désormais une ligne par (pays, canal, jour) avec une vraie colonne
+  // `date` (confirmé le 2026-07-06) — le "CPL réel" du module Seuils est donc borné à la
+  // période sélectionnée, plus cumulé tout historique.
+  const { data } = await supabaseAdmin
+    .from("meta_ads_by_country")
+    .select("country, spend, leads")
+    .gte("date", dateFrom)
+    .lte("date", dateTo);
   const byCountry = new Map<string, { spend: number; leads: number }>();
   for (const row of (data ?? []) as { country: string; spend: number; leads: number }[]) {
     const canonical = getCanonicalCountry(row.country);
@@ -221,7 +224,7 @@ export async function computeAllThresholds(dateFrom: string, dateTo: string): Pr
   const [marketSettingsRes, codAggregates, adMetrics, affiliatePayouts] = await Promise.all([
     supabaseAdmin.from("market_settings").select("*").order("pays"),
     fetchCodAggregatesByCountry(dateFrom, dateTo),
-    fetchAdMetricsByCountry(),
+    fetchAdMetricsByCountry(dateFrom, dateTo),
     fetchAffiliatePayoutByCountry(dateFrom, dateTo),
   ]);
 

@@ -36,7 +36,7 @@ export default function MetaAdsPage() {
       try {
         console.log(`Fetching meta ads from ${dateFrom} to ${dateTo}`);
 
-        const rawData = await fetchMetaAdsByCountry();
+        const rawData = await fetchMetaAdsByCountry(dateFrom, dateTo);
         console.log("Raw data from Supabase:", rawData);
 
         if (!rawData || rawData.length === 0) {
@@ -96,7 +96,7 @@ export default function MetaAdsPage() {
   if (loading) {
     return (
       <div>
-        <Topbar title="Meta Ads" subtitle="Statistiques de publicité par pays — clicks, spend, impressions, leads" />
+        <Topbar title="Media Buying Interne" subtitle="Dépense Meta Ads par pays — clicks, spend, impressions, leads, filtrable par période" />
         <div className="px-6 py-5">
           <div className="text-slate-500">Chargement des données...</div>
         </div>
@@ -107,7 +107,7 @@ export default function MetaAdsPage() {
   if (error) {
     return (
       <div>
-        <Topbar title="Meta Ads" subtitle="Statistiques de publicité par pays — clicks, spend, impressions, leads" />
+        <Topbar title="Media Buying Interne" subtitle="Dépense Meta Ads par pays — clicks, spend, impressions, leads, filtrable par période" />
         <div className="px-6 py-5">
           <div className="text-red-600">Erreur: {error}</div>
         </div>
@@ -118,7 +118,7 @@ export default function MetaAdsPage() {
   if (data.length === 0) {
     return (
       <div>
-        <Topbar title="Meta Ads" subtitle="Statistiques de publicité par pays — clicks, spend, impressions, leads" />
+        <Topbar title="Media Buying Interne" subtitle="Dépense Meta Ads par pays — clicks, spend, impressions, leads, filtrable par période" />
         <div className="px-6 py-5">
           <div className="text-slate-500">Aucune donnée disponible pour cette période</div>
         </div>
@@ -128,14 +128,9 @@ export default function MetaAdsPage() {
 
   return (
     <div>
-      <Topbar title="Meta Ads" subtitle="Statistiques de publicité par pays — clicks, spend, impressions, leads" />
+      <Topbar title="Media Buying Interne" subtitle="Dépense Meta Ads par pays — clicks, spend, impressions, leads, filtrable par période" />
 
       <div className="px-6 py-5 space-y-5">
-        <p className="text-xs text-slate-400">
-          Totaux cumulés depuis le début du suivi — la source Meta Ads n&apos;a pas de dimension
-          temporelle, le sélecteur de dates ne s&apos;applique donc pas ici.
-        </p>
-
         {/* Meta Ads Stats Table */}
         <Section title="Performance Meta Ads par pays">
           <div className="overflow-x-auto">

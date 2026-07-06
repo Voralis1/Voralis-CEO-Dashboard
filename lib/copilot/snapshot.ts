@@ -139,8 +139,14 @@ async function fetchNetworkFunnelRows(
   return rows;
 }
 
-async function fetchAdSpendUsdByCountry(): Promise<{ byCountry: Map<string, number>; known: Set<string> }> {
-  const { data } = await supabaseAdmin.from("meta_ads_by_country").select("country, spend");
+// meta_ads_by_country a une ligne par (pays, canal, jour) avec une vraie colonne `date`
+// (confirmé le 2026-07-06) — filtrage par période réel, plus un snapshot cumulatif.
+async function fetchAdSpendUsdByCountry(dateFrom: string, dateTo: string): Promise<{ byCountry: Map<string, number>; known: Set<string> }> {
+  const { data } = await supabaseAdmin
+    .from("meta_ads_by_country")
+    .select("country, spend")
+    .gte("date", dateFrom)
+    .lte("date", dateTo);
   const byCountry = new Map<string, number>();
   const known = new Set<string>();
   for (const row of (data ?? []) as { country: string; spend: number }[]) {
@@ -398,7 +404,7 @@ export async function buildCopilotSnapshot(dateFrom: string, dateTo: string, rol
   const [marketSettingsRes, publicSettings, adSpend, affiliateData, thresholds] = await Promise.all([
     supabaseAdmin.from("market_settings").select("*").order("pays"),
     fetchPublicMarketSettings(),
-    fetchAdSpendUsdByCountry(),
+    fetchAdSpendUsdByCountry(dateFrom, dateTo),
     fetchAffiliateData(dateFrom, dateTo),
     computeAllThresholds(dateFrom, dateTo),
   ]);

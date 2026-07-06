@@ -65,7 +65,7 @@ export async function fetchTreasuryCashData(dateFrom: string, dateTo: string): P
   const [aggregated, marketSettingsList, metaAdsRows, cashOutManualEntries, affiliatePayout] = await Promise.all([
     aggregateCodNetworksByCountry(dateFrom, dateTo),
     fetchPublicMarketSettings(),
-    fetchMetaAdsByCountry(),
+    fetchMetaAdsByCountry(dateFrom, dateTo),
     fetchCashOutManual(),
     fetchAffiliatePayoutUsdByCountry(dateFrom, dateTo),
   ]);

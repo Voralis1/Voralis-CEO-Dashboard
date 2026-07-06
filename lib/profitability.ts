@@ -115,7 +115,7 @@ export async function fetchProfitabilityData(dateFrom: string, dateTo: string): 
   const [aggregated, marketSettingsList, metaAdsRows, affiliates] = await Promise.all([
     aggregateCodNetworksByCountry(dateFrom, dateTo),
     fetchMarketSettings(),
-    fetchMetaAdsByCountry(),
+    fetchMetaAdsByCountry(dateFrom, dateTo),
     fetchAffiliateNetworks(dateFrom, dateTo),
   ]);
 

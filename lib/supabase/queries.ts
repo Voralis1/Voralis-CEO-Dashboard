@@ -191,13 +191,19 @@ export interface MetaAdsCountryRow {
   date: string;
 }
 
-// Pas de filtrage par période : meta_ads_by_country a une colonne `date` mais elle n'est jamais
-// renseignée (table de snapshot cumulatif par pays/canal, pas une série temporelle) — un filtre
-// dessus exclurait toutes les lignes.
-export async function fetchMetaAdsByCountry() {
-  const { data, error } = await supabase
+// meta_ads_by_country a désormais une ligne par (pays, canal, jour) avec une vraie colonne
+// `date` renseignée (confirmé le 2026-07-06 — ce n'est plus un snapshot cumulatif). Le filtrage
+// par période est donc réel : dateFrom/dateTo optionnels pour les rares appelants qui veulent
+// encore tout l'historique (aucun ne devrait s'en servir sans borne désormais).
+export async function fetchMetaAdsByCountry(dateFrom?: string, dateTo?: string) {
+  let query = supabase
     .from("meta_ads_by_country")
     .select("channel, country, spend, impressions, clicks, leads, cpl, ctr, date");
+
+  if (dateFrom) query = query.gte("date", dateFrom);
+  if (dateTo) query = query.lte("date", dateTo);
+
+  const { data, error } = await query;
 
   if (error) {
     console.error("❌ Error fetching meta ads:", error);

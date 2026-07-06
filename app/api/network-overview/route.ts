@@ -52,13 +52,13 @@ export async function GET(request: Request) {
 
   const [metaAdsRes, clickmarketRes, coliscodRes, africodCongoRes, shipsenByCountryRes, shipsenGlobalRes] =
     await Promise.all([
-      // meta_ads_by_country a une colonne `date` mais elle n'est jamais renseignée (table de
-      // snapshot cumulatif par pays/canal, pas une série temporelle) — filtrer dessus exclurait
-      // toutes les lignes. Pas de filtrage par période possible tant que la source n'expose pas
-      // de dimension temporelle réelle.
+      // meta_ads_by_country a désormais une ligne par (pays, canal, jour) avec une vraie colonne
+      // `date` (confirmé le 2026-07-06) — filtrage par période réel, plus un snapshot cumulatif.
       supabaseAdmin
         .from("meta_ads_by_country")
-        .select("channel, country, spend, impressions, clicks, leads, cpl, ctr, date"),
+        .select("channel, country, spend, impressions, clicks, leads, cpl, ctr, date")
+        .gte("date", dateFrom)
+        .lte("date", dateTo),
       supabaseAdmin.rpc("kpi_clickmarket_marche_periode", { date_from: dateFrom, date_to: dateTo }),
       supabaseAdmin.rpc("kpi_coliscod_marche_periode", { date_from: dateFrom, date_to: dateTo }),
       supabaseAdmin.rpc("kpi_africod_congo_marche_periode", { date_from: dateFrom, date_to: dateTo }),
