@@ -24,15 +24,19 @@ export interface OutOfScopeAdSpend {
   spendUsd: number;
 }
 
-// CRM Voralis (affiliés marketing) — aucune donnée de CA/pays/devise exposée par l'API
-// aujourd'hui, seulement des comptages + un payout global. Trou de source assumé (Prompt 5
-// branchera le vrai CA par affilié depuis le CRM).
+// CRM Voralis (affiliés marketing) — le payout est désormais exact et fiable : total_payout
+// (by_country / networks) est la somme exacte des commissions en USD (project_products.payout,
+// propagée correctement dès l'ingestion côté CRM), pour toute commande ayant atteint au moins
+// le statut "confirmed" — confirmé le 2026-07-06. Seul le CA par réseau affilié reste absent de
+// l'API : impossible de calculer une marge nette sans lui (cf. bannière dans la page).
 export interface AffiliateNetworkRow {
   networkName: string;
   totalOrders: number;
   confirmedOrders: number;
   deliveredOrders: number;
   totalPayout: number | null;
+  // total_payout ÷ confirmées (payé à la confirmation, pas à la livraison — cf. lib/affiliates.ts).
+  payoutPerConfirmedUsd: number | null;
 }
 
 export interface ProfitabilityData {
@@ -97,9 +101,8 @@ async function fetchAffiliateNetworks(dateFrom: string, dateTo: string): Promise
         totalOrders: n.stats.total_orders,
         confirmedOrders: n.stats.confirmed_orders,
         deliveredOrders: n.stats.delivered_orders,
-        // total_payout existe côté API mais sans devise précisée — on le garde affiché tel
-        // quel (pas un trou de source au sens strict), le vrai trou est l'absence de CA.
         totalPayout: n.stats.total_payout ?? null,
+        payoutPerConfirmedUsd: n.stats.confirmed_orders > 0 ? n.stats.total_payout / n.stats.confirmed_orders : null,
       })
     );
     return { rows, error: null };

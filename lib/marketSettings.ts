@@ -4,11 +4,16 @@
 // (market_settings), jamais recodé ailleurs.
 export const DELIVERY_FEE_USD = 11;
 
-// cogs_produit, cout_call_center_par_commande, taux_retour, conf_pct, dr_pct sont NULLABLE :
+// cogs_produit, taux_retour, conf_pct, dr_pct sont NULLABLE :
 // NULL = pas encore saisi par le CEO (→ tout calcul de marge qui en dépend doit s'afficher
 // "incomplet", jamais silencieusement traité comme 0). 0 = coût confirmé réellement nul.
 // Ne jamais faire `valeur ?? 0` sur ces champs dans un calcul de marge — utiliser les helpers
 // de lib/margin.ts qui propagent explicitement l'incomplétude.
+//
+// cout_call_center_par_commande n'est plus lu par le moteur de marge (2026-07-06) : confirmé
+// par le CEO comme déjà inclus dans les 11 USD/commande de frais de livraison fixe. La colonne
+// DB existe toujours (non supprimée) mais ce champ n'est plus dans l'interface TypeScript —
+// aucun code applicatif ne doit le lire ni l'écrire.
 export interface MarketSettings {
   id: string;
   pays: string;
@@ -18,7 +23,6 @@ export interface MarketSettings {
   fx_updated_by: string | null;
   cogs_produit: number | null;
   cogs_devise: "USD" | "local";
-  cout_call_center_par_commande: number | null;
   taux_retour: number | null;
   conf_pct: number | null;
   dr_pct: number | null;
@@ -36,8 +40,7 @@ export interface MarketSettings {
 }
 
 // Sous-ensemble non confidentiel — exposé à tout utilisateur authentifié (Trésorerie,
-// Logistics COD, ProviderKpiTable n'ont besoin que du FX/devise, jamais de COGS/coût call
-// center/marge plancher T).
+// Logistics COD, ProviderKpiTable n'ont besoin que du FX/devise, jamais de COGS/marge plancher T).
 export interface PublicMarketSettings {
   pays: string;
   devise_locale: string;
@@ -54,7 +57,6 @@ export type MarketSettingsUpdate = Partial<
     | "fx_to_usd"
     | "cogs_produit"
     | "cogs_devise"
-    | "cout_call_center_par_commande"
     | "taux_retour"
     | "conf_pct"
     | "dr_pct"
@@ -89,7 +91,7 @@ export async function fetchMarketSettings(): Promise<MarketSettings[]> {
 
 // Champs non confidentiels uniquement (pays/devise/FX) — accessible à tout rôle authentifié.
 // À utiliser partout où seul l'affichage devise/FX est nécessaire (Trésorerie, Logistics COD,
-// ProviderKpiTable), pour ne jamais exposer COGS/coût call center/T à un rôle non-CEO.
+// ProviderKpiTable), pour ne jamais exposer COGS/T à un rôle non-CEO.
 export async function fetchPublicMarketSettings(): Promise<PublicMarketSettings[]> {
   const res = await fetch("/api/market-settings?scope=public");
   if (!res.ok) throw new Error(`Échec du chargement de market_settings (${res.status})`);

@@ -4,13 +4,14 @@ import { computeBaseMargin, computeL } from "@/lib/margin";
 import type { MarketSettings } from "@/lib/marketSettings";
 
 // Module "Seuils de rentabilité & plafonds d'acquisition" — moteur 100% serveur (jamais appelé
-// depuis le navigateur) car il manipule COGS/coût call center/marge plancher T, confidentiels
-// CEO. Réutilise lib/margin.ts telle quelle (même M, même L, même gestion NULL que
-// /profitability) — aucune formule réimplémentée.
+// depuis le navigateur) car il manipule COGS/marge plancher T, confidentiels CEO. Réutilise
+// lib/margin.ts telle quelle (même M, même L, même gestion NULL que /profitability) — aucune
+// formule réimplémentée. Le coût call center n'entre plus dans M : il est inclus dans les 11
+// USD/commande de frais de livraison fixe (cf. lib/margin.ts).
 //
 // Astuce de calcul : computeBaseMargin(livres=1, caLivre=AOV, settings) donne directement les
-// coûts PAR UNITÉ (COGS/call-center/retours par livrée) puisque la fonction est déjà linéaire
-// en "livres" — pas besoin d'une variante "par unité" séparée.
+// coûts PAR UNITÉ (COGS/retours par livrée) puisque la fonction est déjà linéaire en "livres"
+// — pas besoin d'une variante "par unité" séparée.
 //
 // Ce fichier duplique volontairement l'agrégation par pays des 4 réseaux COD/Meta Ads/CRM déjà
 // écrite dans lib/providerKpi.ts et lib/profitability.ts, mais via supabaseAdmin (service_role)
@@ -25,7 +26,6 @@ export interface ThresholdCeoDetail {
   T_local: number;
   T_usd: number;
   cogsPerUnitLocal: number | null;
-  callCenterPerUnitLocal: number | null;
   retoursPerUnitLocal: number | null;
   L: number | null;
 }
@@ -83,22 +83,20 @@ export function computeThresholdRow(
   }
 
   let cogsPerUnitLocal: number | null = null;
-  let callCenterPerUnitLocal: number | null = null;
   let retoursPerUnitLocal: number | null = null;
   let revenuNetLivraisonUnit: number | null = null;
 
   if (aovUsed != null) {
     const base = computeBaseMargin(1, aovUsed, settings);
     cogsPerUnitLocal = base.cogsTotal;
-    callCenterPerUnitLocal = base.coutCallCenterTotal;
     retoursPerUnitLocal = base.coutRetoursTotal;
     revenuNetLivraisonUnit = base.revenuNetLivraison;
     missingFields.push(...base.missingFields);
   }
 
   const M_local =
-    revenuNetLivraisonUnit != null && cogsPerUnitLocal != null && callCenterPerUnitLocal != null && retoursPerUnitLocal != null
-      ? revenuNetLivraisonUnit - cogsPerUnitLocal - callCenterPerUnitLocal - retoursPerUnitLocal
+    revenuNetLivraisonUnit != null && cogsPerUnitLocal != null && retoursPerUnitLocal != null
+      ? revenuNetLivraisonUnit - cogsPerUnitLocal - retoursPerUnitLocal
       : null;
 
   // Base USD choisie pour comparer les marchés entre eux et rester cohérent avec le payout
@@ -108,6 +106,9 @@ export function computeThresholdRow(
   const T_usd = T_local / settings.fx_to_usd;
 
   const L = computeL(settings.conf_pct, settings.dr_pct);
+  if (L == null) {
+    missingFields.push("taux de confirmation/taux de livraison (nécessaires pour calculer le plafond CPL)");
+  }
 
   const cplMaxUsd = M_usd != null && L != null ? (M_usd - T_usd) / L : null;
   const cplBreakEvenUsd = M_usd != null && L != null ? M_usd / L : null;
@@ -124,7 +125,7 @@ export function computeThresholdRow(
     aovUsed,
     aovSource,
     periodeReel,
-    ceoDetail: { M_local, M_usd, T_local, T_usd, cogsPerUnitLocal, callCenterPerUnitLocal, retoursPerUnitLocal, L },
+    ceoDetail: { M_local, M_usd, T_local, T_usd, cogsPerUnitLocal, retoursPerUnitLocal, L },
     cplMaxUsd,
     cplBreakEvenUsd,
     cplMaxLocal,

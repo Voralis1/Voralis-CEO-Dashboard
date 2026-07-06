@@ -9,7 +9,7 @@ import type { UserRole } from "@/lib/auth/role";
 // Agrégateur SERVEUR UNIQUEMENT (jamais importé depuis un composant "use client") pour le
 // copilot IA + les alertes proactives. Réutilise les moteurs déjà écrits (lib/margin.ts,
 // lib/thresholds.ts) plutôt que de réimplémenter le calcul de marge — seule la donnée
-// COGS/coût call center/marge nette (équivalent ceoDetail de lib/thresholds.ts) est retirée
+// COGS/marge nette (équivalent ceoDetail de lib/thresholds.ts) est retirée
 // pour le rôle "team", jamais calculée puis masquée côté client.
 //
 // Trous de source STRUCTURELS (permanents, pas liés à la période sélectionnée) — le copilot et

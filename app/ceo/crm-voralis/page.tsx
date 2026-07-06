@@ -160,7 +160,8 @@ export default function CrmVoralisPage() {
             On juge sur <strong>livré + rentabilité</strong>, jamais sur le taux de confirmation seul. Le coût payout, lui,
             est calculé par commande <strong>confirmée</strong> (pas livrée) : c&apos;est à la confirmation que le payout est dû
             dans ce business — exception valable uniquement pour ce coût. La rentabilité nette (revenu net livraison − payout −
-            COGS − call center − retours) reste <strong>incomplète</strong> : le CRM ne fournit pas encore le CA livré encaissé
+            COGS − retours ; le call center est déjà inclus dans les frais de livraison, pas une ligne séparée) reste{" "}
+            <strong>incomplète</strong> : le CRM ne fournit pas encore le CA livré encaissé
             par affilié/pays, seulement les comptages et le payout (en USD, sans conversion). Dès que ce CA sera branché, la
             marge se calculera automatiquement en USD (comme le payout), via FX pour convertir le CA local — cohérent avec
             /profitability.

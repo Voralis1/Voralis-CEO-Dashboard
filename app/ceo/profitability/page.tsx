@@ -8,6 +8,12 @@ import { COUNTRY_FLAGS } from "@/lib/countries";
 import { fetchProfitabilityData, type ProfitabilityData } from "@/lib/profitability";
 import { AlertTriangle, Loader2, Info } from "lucide-react";
 
+// Payout par unité (petits montants, ex. $2.50) — fmtCurrency arrondit à 0 décimale, trop
+// grossier ici ; on garde 2 décimales comme /ceo/crm-voralis.
+function fmtUsdPerUnit(value: number): string {
+  return `$${value.toLocaleString("fr-FR", { maximumFractionDigits: 2 })}`;
+}
+
 function GapCell({ missingFields }: { missingFields: string[] }) {
   return (
     <span
@@ -109,7 +115,7 @@ export default function ProfitabilityPage() {
         {/* ═══ MEDIA BUYING INTERNE ═══ */}
         <Section
           title="Media Buying Interne · marge par pays"
-          titleRight={<Badge variant="blue">marge = revenu net livraison − ad spend − COGS − call center − retours</Badge>}
+          titleRight={<Badge variant="blue">marge = revenu net livraison − ad spend − COGS − retours (call center inclus dans les frais de livraison)</Badge>}
         >
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -184,7 +190,7 @@ export default function ProfitabilityPage() {
         {/* ═══ AFFILIÉS ═══ */}
         <Section
           title="Affiliés (CRM Voralis) · marge par réseau"
-          titleRight={<Badge variant="yellow">marge = revenu net livraison − payout − COGS − call center − retours</Badge>}
+          titleRight={<Badge variant="yellow">marge = revenu net livraison − payout − COGS − retours (call center inclus dans les frais de livraison)</Badge>}
         >
           {data.affiliatesError && (
             <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm mb-3">
@@ -195,16 +201,17 @@ export default function ProfitabilityPage() {
           <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs mb-3">
             <Info size={14} className="shrink-0 mt-0.5" />
             <p>
-              L&apos;API CRM Voralis ne renvoie ni pays, ni devise, ni CA par réseau affilié — seulement des comptages de
-              commandes et un payout global. Impossible de calculer un revenu net de livraison ou une marge tant que ces deux
-              dépendances (CA livré + payout par pays/devise) ne sont pas branchées depuis le CRM (prévu séparément).
+              Le payout est désormais exact et fiable (somme des commissions réelles en USD, confirmé le 2026-07-06) — payé à
+              la commande <strong>confirmée</strong>, pas livrée. Seul le CA livré encaissé par réseau affilié reste absent de
+              l&apos;API CRM Voralis (ni pays, ni devise associés) : impossible de calculer un revenu net de livraison ou une
+              marge tant que cette dépendance n&apos;est pas branchée depuis le CRM (prévu séparément).
             </p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-slate-200">
-                  {["Réseau", "Commandes", "Confirmées", "Livrées", "Payout total (devise non précisée)", "CA livré encaissé", "Marge nette"].map(
+                  {["Réseau", "Commandes", "Confirmées", "Livrées", "Payout total (USD)", "Coût payout / confirmée", "CA livré encaissé", "Marge nette"].map(
                     (h) => (
                       <th key={h} className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">
                         {h}
@@ -221,19 +228,26 @@ export default function ProfitabilityPage() {
                     <td className="px-3 py-3 font-semibold text-emerald-600">{r.confirmedOrders.toLocaleString("fr-FR")}</td>
                     <td className="px-3 py-3 text-slate-700">{r.deliveredOrders.toLocaleString("fr-FR")}</td>
                     <td className="px-3 py-3 text-slate-700">
-                      {r.totalPayout != null ? r.totalPayout.toLocaleString("fr-FR") : <GapCell missingFields={["payout"]} />}
+                      {r.totalPayout != null ? fmtCurrency(r.totalPayout, "USD") : <GapCell missingFields={["payout"]} />}
+                    </td>
+                    <td className="px-3 py-3 text-slate-700">
+                      {r.payoutPerConfirmedUsd != null ? (
+                        fmtUsdPerUnit(r.payoutPerConfirmedUsd)
+                      ) : (
+                        <span className="text-slate-400" title="Aucune commande confirmée sur cette période">—</span>
+                      )}
                     </td>
                     <td className="px-3 py-3">
                       <GapCell missingFields={["CA livré encaissé (non exposé par le CRM)"]} />
                     </td>
                     <td className="px-3 py-3">
-                      <GapCell missingFields={["CA livré", "pays/devise", "COGS", "call center", "retours"]} />
+                      <GapCell missingFields={["CA livré", "pays/devise", "COGS", "retours"]} />
                     </td>
                   </tr>
                 ))}
                 {data.affiliates.length === 0 && !data.affiliatesError && (
                   <tr>
-                    <td colSpan={7} className="px-3 py-4 text-center text-slate-500">
+                    <td colSpan={8} className="px-3 py-4 text-center text-slate-500">
                       Aucun réseau affilié pour cette période.
                     </td>
                   </tr>

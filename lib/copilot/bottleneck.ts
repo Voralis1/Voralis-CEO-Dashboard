@@ -59,7 +59,7 @@ function marginDriverLabel(market: MarketSnapshot): string {
   const drivers: string[] = [];
   if (cplColor === "red") drivers.push("le CPL réel (Media Buying / Meta Ads) dépasse le seuil de rentabilité");
   if (payoutColor === "red") drivers.push("le payout affilié réel dépasse le seuil de rentabilité");
-  if (drivers.length === 0) return "la marge nette est négative (COGS + coût call center + retours + frais de livraison dépassent le CA encaissé)";
+  if (drivers.length === 0) return "la marge nette est négative (COGS + retours + frais de livraison, qui inclut le call center, dépassent le CA encaissé)";
   return drivers.join(" et ");
 }
 
@@ -100,9 +100,9 @@ export function computeBottleneckAnalysis(snapshot: CopilotSnapshot): Bottleneck
       insights.push({
         priorite: 0,
         ou: { pays: market.pays, etape: "marge" },
-        quoi: `Configurer les paramètres de coût de ${market.pays} (COGS, coût call center, taux de retour dans Paramètres marché) — sans cela, impossible de savoir si ce marché contribue à l'objectif des 50 livraisons rentables/jour.`,
+        quoi: `Configurer les paramètres de coût de ${market.pays} (COGS, taux de retour dans Paramètres marché) — sans cela, impossible de savoir si ce marché contribue à l'objectif des 50 livraisons rentables/jour.`,
         impact: { estimation: null, unite: "livraisons/jour non classables" },
-        angleMort: "Marge non calculable : au moins un paramètre de coût (COGS, coût call center, taux de retour) n'est pas encore saisi pour ce marché.",
+        angleMort: "Marge non calculable : au moins un paramètre de coût (COGS, taux de retour) n'est pas encore saisi pour ce marché.",
       });
     }
   }

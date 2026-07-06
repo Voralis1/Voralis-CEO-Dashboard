@@ -9,7 +9,6 @@ const EDITABLE_FIELDS = [
   "fx_to_usd",
   "cogs_produit",
   "cogs_devise",
-  "cout_call_center_par_commande",
   "taux_retour",
   "conf_pct",
   "dr_pct",

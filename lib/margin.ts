@@ -4,15 +4,18 @@ import { deliveryFeeLocal, type MarketSettings } from "@/lib/marketSettings";
 // tout futur écran qui calcule une marge par pays. Base commune :
 //   frais_livraison_total = nb_livrées × deliveryFeeLocal(pays)   ← même fonction que Prompt 1
 //   revenu_net_livraison  = CA livré encaissé − frais_livraison_total
-// Puis on soustrait COGS, call center (ramené à la livrée via L) et retours — chacun peut être
-// `null` si la donnée n'a pas encore été saisie par le CEO, auquel cas la marge finale est
-// `null` et `missingFields` liste ce qui manque (jamais un calcul silencieux avec 0).
+// Puis on soustrait COGS et retours — chacun peut être `null` si la donnée n'a pas encore été
+// saisie par le CEO, auquel cas la marge finale est `null` et `missingFields` liste ce qui
+// manque (jamais un calcul silencieux avec 0).
+//
+// Coût call center (2026-07-06) : confirmé par le CEO comme DÉJÀ INCLUS dans les 11 USD/commande
+// de frais de livraison fixe — il ne se soustrait donc plus séparément (ça double-compterait le
+// même coût). `market_settings.cout_call_center_par_commande` n'est plus lu par ce moteur.
 
 export interface BaseMargin {
   fraisLivraisonTotal: number;
   revenuNetLivraison: number;
   cogsTotal: number | null;
-  coutCallCenterTotal: number | null;
   coutRetoursTotal: number | null;
   missingFields: string[];
 }
@@ -48,17 +51,6 @@ export function computeBaseMargin(livres: number, caLivre: number, settings: Mar
     cogsTotal = livres * cogsLocal;
   }
 
-  // Call center : coût engagé sur le volume ENTRANT (tous les leads), ramené à la livrée via L.
-  const L = computeL(settings.conf_pct, settings.dr_pct);
-  let coutCallCenterTotal: number | null = null;
-  if (settings.cout_call_center_par_commande == null) {
-    missingFields.push("coût call center par commande");
-  } else if (L == null) {
-    missingFields.push("taux de confirmation/livraison (nécessaires pour ramener le coût call center à la livrée)");
-  } else {
-    coutCallCenterTotal = livres * settings.cout_call_center_par_commande * L;
-  }
-
   // Retours : coût = transport aller déjà engagé (frais de livraison, non récupérable) + frais
   // de retour éventuel du réseau (0 tant que non précisé) — jamais le COGS (produit récupéré).
   let coutRetoursTotal: number | null = null;
@@ -69,7 +61,7 @@ export function computeBaseMargin(livres: number, caLivre: number, settings: Mar
     coutRetoursTotal = livres * (settings.taux_retour / 100) * (fraisLivraisonLocal + fraisRetourLocal);
   }
 
-  return { fraisLivraisonTotal, revenuNetLivraison, cogsTotal, coutCallCenterTotal, coutRetoursTotal, missingFields };
+  return { fraisLivraisonTotal, revenuNetLivraison, cogsTotal, coutRetoursTotal, missingFields };
 }
 
 // coutSpecifique = payout_affilié (bloc Affiliés) ou ad_spend converti en devise locale (bloc
@@ -82,11 +74,10 @@ export function finalizeMargin(
 ): MarginBreakdown {
   const missingFields = coutSpecifique == null ? [...base.missingFields, coutSpecifiqueLabel] : base.missingFields;
 
-  const allKnown =
-    base.cogsTotal != null && base.coutCallCenterTotal != null && base.coutRetoursTotal != null && coutSpecifique != null;
+  const allKnown = base.cogsTotal != null && base.coutRetoursTotal != null && coutSpecifique != null;
 
   const margeNette = allKnown
-    ? base.revenuNetLivraison - coutSpecifique! - base.cogsTotal! - base.coutCallCenterTotal! - base.coutRetoursTotal!
+    ? base.revenuNetLivraison - coutSpecifique! - base.cogsTotal! - base.coutRetoursTotal!
     : null;
 
   const ppdo = margeNette != null && livres > 0 ? margeNette / livres : null;

@@ -18,7 +18,6 @@ type NullableField = Exclude<keyof MarketSettingsUpdate, "cogs_devise" | "fx_to_
 
 const NULLABLE_COLUMNS: { field: NullableField; label: string; step?: string }[] = [
   { field: "cogs_produit", label: "COGS produit", step: "0.01" },
-  { field: "cout_call_center_par_commande", label: "Coût call center / commande", step: "0.01" },
   { field: "taux_retour", label: "Taux de retour %", step: "0.01" },
   { field: "conf_pct", label: "Taux confirmation %", step: "0.01" },
   { field: "dr_pct", label: "Taux livraison %", step: "0.01" },
@@ -129,8 +128,9 @@ export default function MarketSettingsPage() {
           <p>
             Le pays et la devise locale sont verrouillés (mapping validé, non éditable) pour éviter tout bug de
             devise incorrecte assignée à un pays. Les frais de livraison sont une constante globale de{" "}
-            {DELIVERY_FEE_USD} USD/commande, convertie automatiquement via le FX de chaque pays — non éditable
-            individuellement. Un champ laissé <strong>vide</strong> = pas encore saisi (les écrans Rentabilité et
+            {DELIVERY_FEE_USD} USD/commande (coût call center déjà inclus dedans — pas de champ séparé), convertie
+            automatiquement via le FX de chaque pays — non éditable individuellement. Un champ laissé{" "}
+            <strong>vide</strong> = pas encore saisi (les écrans Rentabilité et
             Trésorerie afficheront &ldquo;donnée manquante&rdquo;) — ce n&apos;est pas la même chose qu&apos;un{" "}
             <strong>0</strong> explicite. Exception : <strong>AOV simulé</strong> — laissé vide (cas normal), le module
             Seuils utilise l&apos;AOV réellement observé (CA livré encaissé ÷ livrées) ; renseigné, il sert uniquement à
