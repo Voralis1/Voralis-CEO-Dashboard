@@ -141,7 +141,9 @@ export default function ProfitabilityPage() {
                     </td>
                     <td className="px-3 py-3 text-slate-700">{r.livres.toLocaleString("fr-FR")}</td>
                     <td className="px-3 py-3 font-medium text-slate-900">{fmtCurrency(r.caLivre, r.currency)}</td>
-                    <td className="px-3 py-3 text-slate-700">{fmtCurrency(r.margin.fraisLivraisonTotal, r.currency)}</td>
+                    <td className="px-3 py-3 text-slate-700">
+                      {r.margin.fraisLivraisonTotal != null ? fmtCurrency(r.margin.fraisLivraisonTotal, r.currency) : "donnée manquante"}
+                    </td>
                     <td className="px-3 py-3 text-slate-700">
                       {fmtCurrency(r.adSpendLocal, r.currency)}
                       {!r.adSpendKnown && (

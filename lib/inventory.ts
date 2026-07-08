@@ -1,12 +1,20 @@
-// Stock & Inventaire — quantité physique saisie manuellement (aucune API réseau ne la fournit),
-// seuil de réapprovisionnement CALCULÉ (jamais stocké) à partir des livrées réelles + des
-// paramètres delai_appro_jours/stock_securite (NULL = non configuré, jamais confondu avec 0).
+import { getCanonicalCountry } from "@/lib/countries";
+
+// Stock & Inventaire — la QUANTITÉ vient désormais du CRM Voralis (GET /api/v1/products/stock,
+// 2026-07-08), plus une saisie manuelle. `inventory` ne stocke plus que les paramètres de
+// POLITIQUE par (pays, produit) : délai d'appro, stock de sécurité, surcharge de simulation —
+// jamais une donnée qu'une source vivante pourrait fournir. Le seuil de réapprovisionnement reste
+// CALCULÉ (jamais stocké) à partir des livrées réelles + de ces paramètres (NULL = non configuré,
+// jamais confondu avec 0).
+//
+// quantite_stock reste dans la ligne DB pour compatibilité historique mais n'est plus lue ni
+// écrite par l'app (colonne orpheline assumée, même traitement que cout_call_center_par_commande
+// dans market_settings) — la quantité affichée vient exclusivement de fetchCrmStock() ci-dessous.
 
 export interface InventoryRow {
   id: string;
   pays: string;
   produit: string;
-  quantite_stock: number;
   delai_appro_jours: number | null;
   stock_securite: number | null;
   ventes_moyennes_jour_override: number | null;
@@ -14,11 +22,34 @@ export interface InventoryRow {
   updated_at: string;
 }
 
-export type InventoryCreateInput = Pick<InventoryRow, "pays" | "produit" | "quantite_stock" | "delai_appro_jours" | "stock_securite" | "ventes_moyennes_jour_override">;
+export type InventoryCreateInput = Pick<InventoryRow, "pays" | "produit" | "delai_appro_jours" | "stock_securite" | "ventes_moyennes_jour_override">;
 
 // pays/produit verrouillés après création (clé unique) — on ne les édite pas via PATCH pour
 // éviter une collision silencieuse avec une autre ligne.
-export type InventoryUpdate = Partial<Pick<InventoryRow, "quantite_stock" | "delai_appro_jours" | "stock_securite" | "ventes_moyennes_jour_override">>;
+export type InventoryUpdate = Partial<Pick<InventoryRow, "delai_appro_jours" | "stock_securite" | "ventes_moyennes_jour_override">>;
+
+export interface StockCrmRow {
+  id: string;
+  produit: string;
+  pays: string | null; // null = code pays CRM non reconnu (hors périmètre COD)
+  quantiteStock: number;
+  status: string;
+}
+
+export async function fetchCrmStock(): Promise<StockCrmRow[]> {
+  const res = await fetch("/api/stock");
+  if (!res.ok) throw new Error(`Échec du chargement du stock CRM Voralis (${res.status})`);
+  const json = await res.json();
+  if (!json.success) throw new Error(json.message ?? "Erreur CRM Voralis (stock)");
+
+  return (json.products as { id: string; name: string; country: string; quantity: number; status: string }[]).map((p) => ({
+    id: p.id,
+    produit: p.name,
+    pays: getCanonicalCountry(p.country)?.name ?? null,
+    quantiteStock: p.quantity,
+    status: p.status,
+  }));
+}
 
 export type InventoryStatus = "ok" | "a_commander" | "rupture" | "non_configure";
 

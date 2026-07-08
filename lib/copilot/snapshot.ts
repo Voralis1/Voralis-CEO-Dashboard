@@ -1,6 +1,8 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getCanonicalCountry } from "@/lib/countries";
 import { computeBaseMargin, finalizeMargin, type MarginBreakdown } from "@/lib/margin";
+import { resolveFraisLivraison, type FieldCashRecap } from "@/lib/fieldCash";
+import { fetchFieldCashRecap as fetchFieldCashRecapServer } from "@/lib/fieldCashServer";
 import { fetchPublicMarketSettings, type MarketSettings } from "@/lib/marketSettings";
 import { computeAllThresholds, stripCeoDetail, type ThresholdRow } from "@/lib/thresholds";
 import { computeInventoryThreshold, daysBetweenInclusive } from "@/lib/inventory";
@@ -277,12 +279,16 @@ async function fetchStockByCountry(dateFrom: string, dateTo: string, nbJours: nu
     }
   }
 
-  const [cm, cs, ac, sh, inventoryRes] = await Promise.all([
+  const [cm, cs, ac, sh, inventoryRes, crmStockRes] = await Promise.all([
     supabaseAdmin.rpc("kpi_clickmarket_par_produit_periode", { date_from: dateFrom, date_to: dateTo }),
     supabaseAdmin.rpc("kpi_coliscod_par_produit_periode", { date_from: dateFrom, date_to: dateTo }),
     supabaseAdmin.rpc("kpi_africod_congo_par_produit_periode", { date_from: dateFrom, date_to: dateTo }),
     supabaseAdmin.rpc("kpi_shipsen_par_produit_periode", { date_from: dateFrom, date_to: dateTo }),
     supabaseAdmin.from("inventory").select("*"),
+    fetch("https://www.voralisnatural.com/api/v1/products/stock", {
+      headers: { Authorization: `Bearer ${process.env.REPORTING_API_KEY}` },
+      cache: "no-store",
+    }).then((r) => r.json()),
   ]);
 
   for (const row of (cm.data ?? []) as RawProduitRow[]) merge(row.country_name, row.product_name, row.livres, row.taux_rupture_stock);
@@ -290,35 +296,41 @@ async function fetchStockByCountry(dateFrom: string, dateTo: string, nbJours: nu
   for (const row of (ac.data ?? []) as RawProduitRow[]) merge(row.country_name, row.product_name, row.livres, row.taux_rupture_stock);
   for (const row of (sh.data ?? []) as RawProduitRow[]) merge(row.country, row.product_name, row.livres, row.taux_rupture_stock);
 
-  const inventoryRows = (inventoryRes.data ?? []) as {
-    pays: string;
-    produit: string;
-    quantite_stock: number;
-    delai_appro_jours: number | null;
-    stock_securite: number | null;
-    ventes_moyennes_jour_override: number | null;
-  }[];
+  // Politique par (pays, produit) — délai d'appro/stock de sécurité/surcharge, plus la quantité
+  // (dépréciée, cf. lib/inventory.ts) : la quantité vient exclusivement du CRM Voralis ci-dessous.
+  const policyByKey = new Map(
+    ((inventoryRes.data ?? []) as { pays: string; produit: string; delai_appro_jours: number | null; stock_securite: number | null; ventes_moyennes_jour_override: number | null }[]).map(
+      (inv) => [`${inv.pays}__${inv.produit}`, inv]
+    )
+  );
 
   const byCountry = new Map<string, StockProductRow[]>();
-  for (const inv of inventoryRows) {
-    const stats = merged.get(`${inv.pays}__${inv.produit}`);
-    const ventesObservees = (stats?.livres ?? 0) / nbJours;
-    const threshold = computeInventoryThreshold(
-      inv.quantite_stock,
-      inv.delai_appro_jours,
-      inv.stock_securite,
-      ventesObservees,
-      inv.ventes_moyennes_jour_override
-    );
-    const list = byCountry.get(inv.pays) ?? [];
-    list.push({
-      produit: inv.produit,
-      quantiteStock: inv.quantite_stock,
-      seuilAlerte: threshold.seuilAlerte,
-      statut: threshold.statut,
-      tauxRuptureStock: stats?.tauxRuptureStock ?? null,
-    });
-    byCountry.set(inv.pays, list);
+  if (crmStockRes?.success) {
+    for (const p of crmStockRes.products as { name: string; country: string; quantity: number }[]) {
+      const canonical = getCanonicalCountry(p.country);
+      if (!canonical) continue; // hors périmètre COD (code pays CRM non reconnu)
+
+      const key = `${canonical.name}__${p.name}`;
+      const stats = merged.get(key);
+      const policy = policyByKey.get(key);
+      const ventesObservees = (stats?.livres ?? 0) / nbJours;
+      const threshold = computeInventoryThreshold(
+        p.quantity,
+        policy?.delai_appro_jours ?? null,
+        policy?.stock_securite ?? null,
+        ventesObservees,
+        policy?.ventes_moyennes_jour_override ?? null
+      );
+      const list = byCountry.get(canonical.name) ?? [];
+      list.push({
+        produit: p.name,
+        quantiteStock: p.quantity,
+        seuilAlerte: threshold.seuilAlerte,
+        statut: threshold.statut,
+        tauxRuptureStock: stats?.tauxRuptureStock ?? null,
+      });
+      byCountry.set(canonical.name, list);
+    }
   }
 
   return byCountry;
@@ -416,6 +428,36 @@ export async function buildCopilotSnapshot(dateFrom: string, dateTo: string, rol
   const stockByCountry = await fetchStockByCountry(dateFrom, dateTo, nbJours);
   const cashByCountry = await fetchCashHoldingsByCountry();
 
+  const internalCostCountries = marketSettingsList.filter((s) => s.delivery_model === "internal_real_cost");
+  const fieldCashRecaps = await Promise.all(
+    internalCostCountries.map((s) => fetchFieldCashRecapServer(s.pays, dateFrom, dateTo))
+  );
+  const fieldCashByPays = new Map<string, FieldCashRecap>(internalCostCountries.map((s, i) => [s.pays, fieldCashRecaps[i]]));
+
+  // "Cash non rapatrié" (alerte proactive, cf. lib/copilot/alerts.ts) doit continuer de fonctionner
+  // pour l'Angola même si cash_holdings n'est plus jamais saisi (remplacé par Field Cash) — on
+  // injecte une ligne synthétique représentant le cash détenu + en transit réel de la mini-app,
+  // plutôt que de laisser l'alerte se taire silencieusement faute de données.
+  for (const [pays, recap] of fieldCashByPays) {
+    if (recap.cashDetenuRestant == null) continue; // configuration Field Cash incomplète — rien à ajouter, pas un 0
+    const rows = cashByCountry.get(pays) ?? [];
+    rows.push({
+      entite: "Field Cash Angola (cash détenu restant)",
+      montantDetenu: recap.cashDetenuRestant,
+      statutRapatriement: recap.cashDetenuRestant <= 0 ? "rapatrie" : "en_attente",
+      dateDerniereRemise: null,
+    });
+    if (recap.remisEnTransit > 0) {
+      rows.push({
+        entite: "Field Cash Angola (rapatriement en transit)",
+        montantDetenu: recap.remisEnTransit,
+        statutRapatriement: "en_cours",
+        dateDerniereRemise: null,
+      });
+    }
+    cashByCountry.set(pays, rows);
+  }
+
   const affiliatesCountryMap = new Map(affiliateData.byCountry.map((r) => [r.pays, r]));
   const thresholdByCountry = new Map(thresholds.map((t) => [t.pays, t]));
 
@@ -431,7 +473,12 @@ export async function buildCopilotSnapshot(dateFrom: string, dateTo: string, rol
     const adSpendKnown = adSpend.known.has(settings.pays);
     const adSpendLocal = adSpendUsd * settings.fx_to_usd;
 
-    const base = computeBaseMargin(livres, caLivre, settings);
+    const { fraisLivraisonTotal, chargesExternesTotal } = resolveFraisLivraison(
+      settings,
+      livres,
+      fieldCashByPays.get(settings.pays) ?? null
+    );
+    const base = computeBaseMargin(livres, caLivre, settings, fraisLivraisonTotal, chargesExternesTotal);
     const margin = finalizeMargin(base, livres, adSpendLocal, "ad spend (Media Buying Interne)");
 
     const thresholdRow = thresholdByCountry.get(settings.pays);

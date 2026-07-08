@@ -1,6 +1,35 @@
 "use client";
 import { createContext, useContext, useState, ReactNode } from "react";
 
+// SOURCE DE VÉRITÉ — quelle date chaque KPI utilise réellement quand une page consomme
+// dateFrom/dateTo d'ici. Si docs/documentation-technique-dashboard.md diverge de ce tableau,
+// c'est CE fichier qui fait foi (le tableau doc n'est qu'une vue de lecture, pas une seconde
+// source). Risque si on se trompe : filtrer un KPI de revenu sur order_date au lieu de
+// delivered_at/processed_at fausserait silencieusement tous les montants (règle COD : l'argent
+// n'existe que sur commande livrée ET encaissée, jamais sur "créée" ou "confirmée").
+//
+//   Écran / KPI                                          Date de référence          Colonne source
+//   ---------------------------------------------------  --------------------------  -------------------------------
+//   Funnel (leads, confirmées, en attente, annulées,      Date de CRÉATION            order_date
+//     rupture stock, doublons) — 4 réseaux logistiques
+//   CA livré / revenu livré — mêmes 4 réseaux             Date de LIVRAISON            delivered_at (processed_at Shipsen)
+//   Rentabilité / marge nette (/profitability)            Date de LIVRAISON            delivered_at / processed_at
+//   Trésorerie — cash encaissé (/ceo)                     Date de LIVRAISON (proxy —    delivered_at / processed_at
+//                                                          pas encore de date
+//                                                          d'encaissement distincte)
+//   Seuils de rentabilité (/thresholds)                   Date de LIVRAISON            delivered_at / processed_at
+//   Copilot IA / Centre d'alertes                         Mixte : funnel=création,      order_date / delivered_at
+//                                                          revenu=livraison
+//   Payout affilié (CRM Voralis, /crm-voralis)            Date de CRÉATION (agrégat     externe, non stockée
+//                                                          CRM, pas de date d'engagement
+//                                                          individuelle)
+//   Ad spend (Meta Ads, /meta-ads)                        Date de DÉPENSE              date (meta_ads_by_country)
+//   Stock — quantités (/inventory)                        NON FILTRÉ — état courant     —
+//   Stock — vélocité de vente (ventes moy./jour)          Date de LIVRAISON             delivered_at
+//   Cash détenu "chez qui" (/ceo)                         NON FILTRÉ — snapshot         —
+//   Cash rapatrié (statut)                                NON FILTRÉ — pas de date      —
+//                                                          d'événement disponible
+
 export type DateRangePreset = "today" | "7d" | "30d" | "thisMonth" | "lastMonth" | "custom";
 
 function toISODate(d: Date): string {

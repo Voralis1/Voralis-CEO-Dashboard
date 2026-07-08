@@ -14,7 +14,7 @@ export async function GET(request: Request) {
     if (!role) return Response.json({ error: "Non authentifié." }, { status: 401 });
     const { data, error } = await supabaseAdmin
       .from("market_settings")
-      .select("pays, devise_locale, fx_to_usd")
+      .select("pays, devise_locale, fx_to_usd, delivery_model")
       .order("pays");
     if (error) return Response.json({ error: error.message }, { status: 500 });
     return Response.json({ settings: data });

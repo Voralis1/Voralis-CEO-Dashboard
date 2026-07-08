@@ -2,6 +2,7 @@ import { PROVIDERS } from "@/lib/providerKpi";
 import { fetchMetaAdsByCountry } from "@/lib/supabase/queries";
 import { fetchMarketSettings, type MarketSettings } from "@/lib/marketSettings";
 import { computeBaseMargin, finalizeMargin, type MarginBreakdown } from "@/lib/margin";
+import { fetchFieldCashRecap, resolveFraisLivraison, type FieldCashRecap } from "@/lib/fieldCash";
 import { getCanonicalCountry } from "@/lib/countries";
 
 // "Media Buying Interne" = les 4 réseaux COD (ClickMarket/Coliscod/Africod Congo/Shipsen),
@@ -122,6 +123,13 @@ export async function fetchProfitabilityData(dateFrom: string, dateTo: string): 
   const marketSettingsByPays = new Map<string, MarketSettings>(marketSettingsList.map((s) => [s.pays, s]));
   const { byCountry: adSpendByCanonicalCountry, outOfScope: outOfScopeAdSpend } = aggregateAdSpendByCountry(metaAdsRows);
 
+  // Angola (delivery_model = internal_real_cost) a besoin du recap Field Cash pour résoudre ses
+  // frais de livraison réels — les 6 autres pays n'en ont pas besoin (resolveFraisLivraison les
+  // ignore). Chargé une seule fois par pays concerné, pas par ligne.
+  const internalCostCountries = marketSettingsList.filter((s) => s.delivery_model === "internal_real_cost");
+  const fieldCashRecaps = await Promise.all(internalCostCountries.map((s) => fetchFieldCashRecap(s.pays, dateFrom, dateTo)));
+  const fieldCashByPays = new Map<string, FieldCashRecap>(internalCostCountries.map((s, i) => [s.pays, fieldCashRecaps[i]]));
+
   const mediaBuying: MediaBuyingCountryRow[] = [];
   for (const [countryName, { livres, caLivre }] of aggregated) {
     const settings = marketSettingsByPays.get(countryName);
@@ -131,7 +139,12 @@ export async function fetchProfitabilityData(dateFrom: string, dateTo: string): 
     const adSpendKnown = adSpendByCanonicalCountry.has(countryName);
     const adSpendLocal = adSpendUsd * settings.fx_to_usd;
 
-    const base = computeBaseMargin(livres, caLivre, settings);
+    const { fraisLivraisonTotal, chargesExternesTotal } = resolveFraisLivraison(
+      settings,
+      livres,
+      fieldCashByPays.get(countryName) ?? null
+    );
+    const base = computeBaseMargin(livres, caLivre, settings, fraisLivraisonTotal, chargesExternesTotal);
     const margin = finalizeMargin(base, livres, adSpendLocal, "ad spend");
 
     mediaBuying.push({

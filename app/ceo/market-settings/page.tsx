@@ -228,7 +228,13 @@ export default function MarketSettingsPage() {
                           />
                         </td>
                         <td className="px-3 py-3 text-slate-700 whitespace-nowrap">
-                          {fmtLocalAmount(deliveryFeeLocal(fx), row.devise_locale)}
+                          {row.delivery_model === "internal_real_cost" ? (
+                            <span title="Coûts réels Field Cash (commissions agent/manager + carburant), pas le forfait 11$">
+                              <Badge variant="blue">Field Cash (réel)</Badge>
+                            </span>
+                          ) : (
+                            fmtLocalAmount(deliveryFeeLocal(fx), row.devise_locale)
+                          )}
                         </td>
                         <td className="px-3 py-3">
                           <button

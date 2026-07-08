@@ -14,6 +14,14 @@ export const DELIVERY_FEE_USD = 11;
 // par le CEO comme déjà inclus dans les 11 USD/commande de frais de livraison fixe. La colonne
 // DB existe toujours (non supprimée) mais ce champ n'est plus dans l'interface TypeScript —
 // aucun code applicatif ne doit le lire ni l'écrire.
+// external_11usd = forfait fixe DELIVERY_FEE_USD (tout inclus, call center compris) — 6 marchés
+// à prestataire logistique externe. internal_real_cost = frais réels de la mini-app "Field Cash
+// Angola" (commissions agent/manager + carburant), remplace le forfait pour l'Angola uniquement
+// (2026-07-08). Verrouillé par migration SQL, jamais éditable depuis /ceo/market-settings — au
+// même titre que pays/devise_locale, pour ne jamais désynchroniser un pays de son vrai modèle
+// de coût. Voir lib/fieldCash.ts (resolveFraisLivraison) pour le branchement.
+export type DeliveryModel = "external_11usd" | "internal_real_cost";
+
 export interface MarketSettings {
   id: string;
   pays: string;
@@ -21,6 +29,7 @@ export interface MarketSettings {
   fx_to_usd: number;
   fx_updated_at: string;
   fx_updated_by: string | null;
+  delivery_model: DeliveryModel;
   cogs_produit: number | null;
   cogs_devise: "USD" | "local";
   taux_retour: number | null;
@@ -45,6 +54,7 @@ export interface PublicMarketSettings {
   pays: string;
   devise_locale: string;
   fx_to_usd: number;
+  delivery_model: DeliveryModel;
 }
 
 // Champs éditables par le CEO via /ceo/market-settings — devise_locale et pays sont

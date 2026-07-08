@@ -19,6 +19,7 @@ import {
   Target,
   Package,
   Bot,
+  Wallet,
 } from "lucide-react";
 import { fetchNetworkOverview, computeAlerts } from "@/lib/dashboardData";
 
@@ -30,6 +31,7 @@ const NAV = [
   { href: "/ceo/logistics-cod", label: "Réseaux Logistiques / COD", icon: Zap },
   { href: "/ceo/crm-voralis",   label: "CRM Voralis", icon: Share2 },
   { href: "/ceo/inventory",     label: "Stock & Inventaire", icon: Package },
+  { href: "/ceo/field-cash-angola", label: "Field Cash Angola", icon: Wallet },
   { href: "/ceo/copilot",       label: "Copilot IA", icon: Bot },
   { href: "/ceo/alerts",        label: "Alertes",    icon: Bell },
   { href: "/ceo/team",          label: "Équipe",     icon: Users },

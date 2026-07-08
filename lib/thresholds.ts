@@ -1,6 +1,8 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getCanonicalCountry } from "@/lib/countries";
 import { computeBaseMargin, computeL } from "@/lib/margin";
+import { resolveFraisLivraisonUnitaire, type FieldCashRecap } from "@/lib/fieldCash";
+import { fetchFieldCashRecap as fetchFieldCashRecapServer } from "@/lib/fieldCashServer";
 import type { MarketSettings } from "@/lib/marketSettings";
 
 // Module "Seuils de rentabilité & plafonds d'acquisition" — moteur 100% serveur (jamais appelé
@@ -71,7 +73,8 @@ export function computeThresholdRow(
   aovObserved: number | null,
   cplReelUsd: number | null,
   payoutReelUsd: number | null,
-  periodeReel: { dateFrom: string; dateTo: string }
+  periodeReel: { dateFrom: string; dateTo: string },
+  fieldCashRecap: FieldCashRecap | null = null
 ): ThresholdRow {
   const missingFields: string[] = [];
 
@@ -87,7 +90,11 @@ export function computeThresholdRow(
   let revenuNetLivraisonUnit: number | null = null;
 
   if (aovUsed != null) {
-    const base = computeBaseMargin(1, aovUsed, settings);
+    // Astuce livres=1 : il faut un frais de livraison PAR UNITÉ, pas un total période — pour
+    // l'Angola (internal_real_cost), c'est le coût interne moyen observé sur la période (cf.
+    // lib/fieldCash.ts), faute d'un "coût de la prochaine commande" connu à l'avance.
+    const { fraisLivraisonUnitaire, chargesExternesUnitaire } = resolveFraisLivraisonUnitaire(settings, fieldCashRecap);
+    const base = computeBaseMargin(1, aovUsed, settings, fraisLivraisonUnitaire, chargesExternesUnitaire);
     cogsPerUnitLocal = base.cogsTotal;
     retoursPerUnitLocal = base.coutRetoursTotal;
     revenuNetLivraisonUnit = base.revenuNetLivraison;
@@ -231,6 +238,12 @@ export async function computeAllThresholds(dateFrom: string, dateTo: string): Pr
   const marketSettingsList = (marketSettingsRes.data ?? []) as MarketSettings[];
   const periodeReel = { dateFrom, dateTo };
 
+  const internalCostCountries = marketSettingsList.filter((s) => s.delivery_model === "internal_real_cost");
+  const fieldCashRecaps = await Promise.all(
+    internalCostCountries.map((s) => fetchFieldCashRecapServer(s.pays, dateFrom, dateTo))
+  );
+  const fieldCashByPays = new Map<string, FieldCashRecap>(internalCostCountries.map((s, i) => [s.pays, fieldCashRecaps[i]]));
+
   return marketSettingsList.map((settings) => {
     const cod = codAggregates.get(settings.pays);
     const aovObserved = cod && cod.livres > 0 ? cod.caLivre / cod.livres : null;
@@ -241,7 +254,14 @@ export async function computeAllThresholds(dateFrom: string, dateTo: string): Pr
     const aff = affiliatePayouts.get(settings.pays);
     const payoutReelUsd = aff && aff.confirmedOrders > 0 ? aff.totalPayoutUsd / aff.confirmedOrders : null;
 
-    return computeThresholdRow(settings, aovObserved, cplReelUsd, payoutReelUsd, periodeReel);
+    return computeThresholdRow(
+      settings,
+      aovObserved,
+      cplReelUsd,
+      payoutReelUsd,
+      periodeReel,
+      fieldCashByPays.get(settings.pays) ?? null
+    );
   });
 }
 

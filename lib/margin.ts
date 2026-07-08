@@ -1,20 +1,27 @@
-import { deliveryFeeLocal, type MarketSettings } from "@/lib/marketSettings";
+import type { MarketSettings } from "@/lib/marketSettings";
 
-// Moteur de marge partagé par /profitability (blocs Affiliés + Media Buying Interne) et par
-// tout futur écran qui calcule une marge par pays. Base commune :
-//   frais_livraison_total = nb_livrées × deliveryFeeLocal(pays)   ← même fonction que Prompt 1
-//   revenu_net_livraison  = CA livré encaissé − frais_livraison_total
+// Moteur de marge partagé par /profitability (blocs Affiliés + Media Buying Interne), /thresholds
+// et le Copilot IA. Base commune :
+//   revenu_net_livraison  = CA livré encaissé − frais_livraison_total (− charges externes)
 // Puis on soustrait COGS et retours — chacun peut être `null` si la donnée n'a pas encore été
 // saisie par le CEO, auquel cas la marge finale est `null` et `missingFields` liste ce qui
 // manque (jamais un calcul silencieux avec 0).
 //
 // Coût call center (2026-07-06) : confirmé par le CEO comme DÉJÀ INCLUS dans les 11 USD/commande
-// de frais de livraison fixe — il ne se soustrait donc plus séparément (ça double-compterait le
-// même coût). `market_settings.cout_call_center_par_commande` n'est plus lu par ce moteur.
+// de frais de livraison fixe (pays à prestataire externe) — il ne se soustrait donc plus
+// séparément (ça double-compterait le même coût).
+//
+// Modèle de coût par pays (2026-07-08, cf. lib/fieldCash.ts) : `fraisLivraisonTotal` et
+// `chargesExternesTotal` sont désormais résolus par l'APPELANT (via resolveFraisLivraison), pas
+// calculés ici — ce fichier ne connaît plus deliveryFeeLocal() ni le modèle Field Cash Angola,
+// il reste un pur moteur d'arithmétique de marge, peu importe la source des frais de livraison.
+// `fraisLivraisonTotal == null` signifie "configuration de coût manquante" (Angola sans
+// field_delivery_params) — jamais traité comme 0.
 
 export interface BaseMargin {
-  fraisLivraisonTotal: number;
-  revenuNetLivraison: number;
+  fraisLivraisonTotal: number | null;
+  chargesExternesTotal: number | null; // uniquement Angola (internal_real_cost) — null ailleurs, pas "manquant"
+  revenuNetLivraison: number | null;
   cogsTotal: number | null;
   coutRetoursTotal: number | null;
   missingFields: string[];
@@ -34,12 +41,19 @@ export function computeL(confPct: number | null, drPct: number | null): number |
   return 1 / ((confPct / 100) * (drPct / 100));
 }
 
-export function computeBaseMargin(livres: number, caLivre: number, settings: MarketSettings): BaseMargin {
-  const fraisLivraisonLocal = deliveryFeeLocal(settings.fx_to_usd);
-  const fraisLivraisonTotal = livres * fraisLivraisonLocal;
-  const revenuNetLivraison = caLivre - fraisLivraisonTotal;
-
+export function computeBaseMargin(
+  livres: number,
+  caLivre: number,
+  settings: MarketSettings,
+  fraisLivraisonTotal: number | null,
+  chargesExternesTotal: number | null
+): BaseMargin {
   const missingFields: string[] = [];
+
+  if (fraisLivraisonTotal == null) {
+    missingFields.push("frais de livraison (configuration Field Cash Angola incomplète)");
+  }
+  const revenuNetLivraison = fraisLivraisonTotal != null ? caLivre - fraisLivraisonTotal : null;
 
   // COGS — un produit retourné est réintégrable au stock (revendable), donc le COGS ne se
   // soustrait qu'une fois, sur les livrées, jamais une seconde fois dans le coût des retours.
@@ -53,15 +67,18 @@ export function computeBaseMargin(livres: number, caLivre: number, settings: Mar
 
   // Retours : coût = transport aller déjà engagé (frais de livraison, non récupérable) + frais
   // de retour éventuel du réseau (0 tant que non précisé) — jamais le COGS (produit récupéré).
+  // Pour l'Angola (internal_real_cost), fraisLivraisonTotal est un TOTAL période (pas un taux
+  // unitaire) : on retombe sur le taux moyen par livrée pour rester cohérent avec la formule.
   let coutRetoursTotal: number | null = null;
   if (settings.taux_retour == null) {
     missingFields.push("taux de retour");
-  } else {
+  } else if (fraisLivraisonTotal != null) {
+    const fraisLivraisonLocal = livres > 0 ? fraisLivraisonTotal / livres : 0;
     const fraisRetourLocal = settings.frais_retour_local ?? 0;
     coutRetoursTotal = livres * (settings.taux_retour / 100) * (fraisLivraisonLocal + fraisRetourLocal);
   }
 
-  return { fraisLivraisonTotal, revenuNetLivraison, cogsTotal, coutRetoursTotal, missingFields };
+  return { fraisLivraisonTotal, chargesExternesTotal, revenuNetLivraison, cogsTotal, coutRetoursTotal, missingFields };
 }
 
 // coutSpecifique = payout_affilié (bloc Affiliés) ou ad_spend converti en devise locale (bloc
@@ -74,10 +91,11 @@ export function finalizeMargin(
 ): MarginBreakdown {
   const missingFields = coutSpecifique == null ? [...base.missingFields, coutSpecifiqueLabel] : base.missingFields;
 
-  const allKnown = base.cogsTotal != null && base.coutRetoursTotal != null && coutSpecifique != null;
+  const allKnown =
+    base.revenuNetLivraison != null && base.cogsTotal != null && base.coutRetoursTotal != null && coutSpecifique != null;
 
   const margeNette = allKnown
-    ? base.revenuNetLivraison - coutSpecifique! - base.cogsTotal! - base.coutRetoursTotal!
+    ? base.revenuNetLivraison! - coutSpecifique! - base.cogsTotal! - base.coutRetoursTotal! - (base.chargesExternesTotal ?? 0)
     : null;
 
   const ppdo = margeNette != null && livres > 0 ? margeNette / livres : null;

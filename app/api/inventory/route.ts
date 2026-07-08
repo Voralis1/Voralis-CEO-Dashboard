@@ -25,7 +25,6 @@ export async function POST(request: Request) {
     .insert({
       pays: body.pays,
       produit: body.produit,
-      quantite_stock: body.quantite_stock,
       delai_appro_jours: body.delai_appro_jours,
       stock_securite: body.stock_securite,
       ventes_moyennes_jour_override: body.ventes_moyennes_jour_override,

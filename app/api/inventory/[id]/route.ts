@@ -2,7 +2,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { getCurrentUserRole } from "@/lib/auth/role";
 import type { InventoryUpdate } from "@/lib/inventory";
 
-const EDITABLE_FIELDS = ["quantite_stock", "delai_appro_jours", "stock_securite", "ventes_moyennes_jour_override"] as const;
+const EDITABLE_FIELDS = ["delai_appro_jours", "stock_securite", "ventes_moyennes_jour_override"] as const;
 
 export async function PATCH(request: Request, ctx: RouteContext<"/api/inventory/[id]">) {
   const role = await getCurrentUserRole();
