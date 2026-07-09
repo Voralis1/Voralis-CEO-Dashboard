@@ -105,6 +105,40 @@ export async function fetchMetaAdsByCountry(dateFrom?: string, dateTo?: string) 
   return (data ?? []) as MetaAdsCountryRow[];
 }
 
+export interface MetaAdsAccountRow {
+  channel: string;
+  account_id: string;
+  account_name: string | null;
+  country: string;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  leads: number;
+  cpl: number | null;
+  ctr: number | null;
+  date: string;
+}
+
+// meta_ads_by_account — une ligne par (compte publicitaire, pays, canal, jour), même convention
+// de filtrage par date réelle que meta_ads_by_country (voir commentaire ci-dessus).
+export async function fetchMetaAdsByAccount(dateFrom?: string, dateTo?: string) {
+  let query = supabase
+    .from("meta_ads_by_account")
+    .select("channel, account_id, account_name, country, spend, impressions, clicks, leads, cpl, ctr, date");
+
+  if (dateFrom) query = query.gte("date", dateFrom);
+  if (dateTo) query = query.lte("date", dateTo);
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.error("❌ Error fetching meta ads by account:", error);
+    return [];
+  }
+
+  return (data ?? []) as MetaAdsAccountRow[];
+}
+
 export interface ClickMarketKpiRow {
   country_id: number;
   country_name: string;

@@ -8,7 +8,8 @@ import { AlertTriangle, Loader2, Info, ArrowUpDown } from "lucide-react";
 
 type AffiliateSortKey = "payoutPerConfirmedUsd" | "drPct" | "deliveredOrders" | "totalPayoutUsd";
 
-const DEFAULT_THRESHOLD_USD = 5;
+// Seuil d'alerte payout/confirmée — fixé par le CEO, pas une saisie manuelle par écran.
+const PAYOUT_ALERT_THRESHOLD_USD = 10;
 
 function fmtUsd(value: number): string {
   return `$${value.toLocaleString("fr-FR", { maximumFractionDigits: 2 })}`;
@@ -45,7 +46,6 @@ export default function CrmVoralisPage() {
   const [data, setData] = useState<AffiliatesData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD_USD);
 
   const [affSortKey, setAffSortKey] = useState<AffiliateSortKey>("payoutPerConfirmedUsd");
   const [affSortAsc, setAffSortAsc] = useState(true);
@@ -168,20 +168,6 @@ export default function CrmVoralisPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-slate-500">Seuil d&apos;alerte coût payout/confirmée</label>
-          <div className="flex items-center gap-1 bg-slate-50 rounded-lg px-2 py-1.5 border border-slate-200">
-            <span className="text-xs text-slate-400">$</span>
-            <input
-              type="number"
-              value={threshold}
-              onChange={(e) => setThreshold(e.target.valueAsNumber || 0)}
-              className="w-16 text-xs bg-transparent focus:outline-none"
-            />
-          </div>
-          <span className="text-[10px] text-slate-400">au-dessus = badge rouge (paramètre local, non persisté)</span>
-        </div>
-
         {/* ═══ Par affilié ═══ */}
         <Section title={`Leaderboard par affilié (${data.totals.affiliates})`}>
           <div className="overflow-x-auto">
@@ -201,7 +187,7 @@ export default function CrmVoralisPage() {
               </thead>
               <tbody>
                 {sortedAffiliates.map((r) => {
-                  const overThreshold = r.payoutPerConfirmedUsd != null && r.payoutPerConfirmedUsd > threshold;
+                  const overThreshold = r.payoutPerConfirmedUsd != null && r.payoutPerConfirmedUsd > PAYOUT_ALERT_THRESHOLD_USD;
                   return (
                     <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                       <td className="px-3 py-3 font-medium text-slate-900">{r.name}</td>
@@ -259,7 +245,7 @@ export default function CrmVoralisPage() {
               </thead>
               <tbody>
                 {sortedCountries.filter((c) => c.countryName != null).map((r) => {
-                  const overThreshold = r.payoutPerConfirmedUsd != null && r.payoutPerConfirmedUsd > threshold;
+                  const overThreshold = r.payoutPerConfirmedUsd != null && r.payoutPerConfirmedUsd > PAYOUT_ALERT_THRESHOLD_USD;
                   return (
                     <tr key={r.countryCode} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                       <td className="px-3 py-3">

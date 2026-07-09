@@ -3,7 +3,13 @@ import { useEffect, useState } from "react";
 import Topbar from "@/components/layout/Topbar";
 import { Section, Badge } from "@/components/ui";
 import { useFilters } from "@/lib/filters";
-import { fetchMetaAdsByCountry, MetaAdsCountryRow, diagnoseSupabaseConnection } from "@/lib/supabase/queries";
+import {
+  fetchMetaAdsByCountry,
+  MetaAdsCountryRow,
+  fetchMetaAdsByAccount,
+  MetaAdsAccountRow,
+  diagnoseSupabaseConnection,
+} from "@/lib/supabase/queries";
 import { fmtUSD } from "@/lib/data";
 import { COUNTRY_FLAGS } from "@/lib/countries";
 
@@ -18,11 +24,26 @@ interface ProcessedMetaAdsData {
   ctr: number;
 }
 
+interface ProcessedMetaAdsAccountData {
+  accountId: string;
+  label: string;
+  clicks: number;
+  spend: number;
+  impressions: number;
+  leads: number;
+  cpl: number;
+  ctr: number;
+}
+
 export default function MetaAdsPage() {
   const { dateFrom, dateTo } = useFilters();
   const [data, setData] = useState<ProcessedMetaAdsData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [accountData, setAccountData] = useState<ProcessedMetaAdsAccountData[]>([]);
+  const [accountLoading, setAccountLoading] = useState(true);
+  const [accountError, setAccountError] = useState<string | null>(null);
 
   // Run diagnosis once on mount
   useEffect(() => {
@@ -91,6 +112,54 @@ export default function MetaAdsPage() {
     };
 
     fetchData();
+  }, [dateFrom, dateTo]);
+
+  // Meta Ads par compte publicitaire (meta_ads_by_account) — chargement séparé du tableau par
+  // pays ci-dessus : une erreur ou une absence de données ici n'affecte jamais l'affichage déjà
+  // existant par pays.
+  useEffect(() => {
+    const fetchAccountData = async () => {
+      setAccountLoading(true);
+      setAccountError(null);
+      try {
+        const rawData = await fetchMetaAdsByAccount(dateFrom, dateTo);
+
+        const aggregatedByAccount: Record<string, ProcessedMetaAdsAccountData> = {};
+
+        rawData.forEach((row: MetaAdsAccountRow) => {
+          if (!aggregatedByAccount[row.account_id]) {
+            aggregatedByAccount[row.account_id] = {
+              accountId: row.account_id,
+              label: row.account_name || row.account_id,
+              clicks: 0,
+              spend: 0,
+              impressions: 0,
+              leads: 0,
+              cpl: 0,
+              ctr: 0,
+            };
+          }
+          aggregatedByAccount[row.account_id].clicks += row.clicks || 0;
+          aggregatedByAccount[row.account_id].spend += row.spend || 0;
+          aggregatedByAccount[row.account_id].impressions += row.impressions || 0;
+          aggregatedByAccount[row.account_id].leads += row.leads || 0;
+        });
+
+        const processed = Object.values(aggregatedByAccount).map((item) => ({
+          ...item,
+          cpl: item.leads > 0 ? item.spend / item.leads : 0,
+          ctr: item.impressions > 0 ? (item.clicks / item.impressions) * 100 : 0,
+        }));
+
+        setAccountData(processed);
+      } catch (err) {
+        setAccountError(err instanceof Error ? err.message : "Erreur inconnue");
+      } finally {
+        setAccountLoading(false);
+      }
+    };
+
+    fetchAccountData();
   }, [dateFrom, dateTo]);
 
   if (loading) {
@@ -166,6 +235,46 @@ export default function MetaAdsPage() {
               </tbody>
             </table>
           </div>
+        </Section>
+
+        {/* Meta Ads par compte publicitaire */}
+        <Section title="Performance Meta Ads par compte publicitaire">
+          {accountLoading ? (
+            <div className="text-slate-500 text-xs py-4">Chargement des données par compte…</div>
+          ) : accountError ? (
+            <div className="text-red-600 text-xs py-2">Erreur : {accountError}</div>
+          ) : accountData.length === 0 ? (
+            <div className="text-slate-500 text-xs py-4">Aucune donnée par compte publicitaire pour cette période.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200">
+                    {["Compte", "Clicks", "Spend", "Impressions", "Leads", "CPL", "CTR"].map((h) => (
+                      <th key={h} className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {accountData.map((d) => (
+                    <tr key={d.accountId} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                      <td className="px-3 py-3 font-medium text-slate-900">{d.label}</td>
+                      <td className="px-3 py-3 text-slate-700">{Math.round(d.clicks).toLocaleString("fr-FR")}</td>
+                      <td className="px-3 py-3 text-slate-700">{fmtUSD(d.spend)}</td>
+                      <td className="px-3 py-3 text-slate-700">{Math.round(d.impressions).toLocaleString("fr-FR")}</td>
+                      <td className="px-3 py-3 font-semibold text-emerald-600">{Math.round(d.leads).toLocaleString("fr-FR")}</td>
+                      <td className="px-3 py-3 text-slate-700">${d.cpl.toFixed(2)}</td>
+                      <td className="px-3 py-3">
+                        <Badge variant={d.ctr >= 6.5 ? "green" : d.ctr >= 5 ? "yellow" : "red"}>
+                          {d.ctr.toFixed(2)}%
+                        </Badge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </Section>
 
         {/* Summary Stats */}

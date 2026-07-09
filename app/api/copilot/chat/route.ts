@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import { getCurrentUserRole } from "@/lib/auth/role";
 import { buildCopilotSnapshot } from "@/lib/copilot/snapshot";
 import { computeBottleneckAnalysis } from "@/lib/copilot/bottleneck";
@@ -11,7 +11,17 @@ import { computeBottleneckAnalysis } from "@/lib/copilot/bottleneck";
 //      s'exécute : buildCopilotSnapshot() omet purement et simplement le champ margin/ceoDetail
 //      pour le rôle "team" — cette donnée ne quitte donc jamais le serveur, quoi que le prompt
 //      utilisateur demande (cohérent avec le module Seuils, Prompt 6).
-const client = new Anthropic();
+//
+// LLM servi via OpenRouter (2026-07-08) — endpoint compatible OpenAI, pas l'API Anthropic
+// native. Modèle : deepseek/deepseek-v4-flash (slug confirmé sur l'API publique OpenRouter).
+// Conséquence : pas de "thinking" natif ni de cache_control (spécifiques à l'API Anthropic) —
+// juste un tableau messages plat, format OpenAI.
+const OPENROUTER_MODEL = "deepseek/deepseek-v4-flash";
+
+const client = new OpenAI({
+  apiKey: process.env.OPENROUTER_API_KEY,
+  baseURL: "https://openrouter.ai/api/v1",
+});
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -57,9 +67,9 @@ export async function POST(request: Request) {
   const role = await getCurrentUserRole();
   if (!role) return Response.json({ error: "Non authentifié." }, { status: 401 });
 
-  if (!process.env.ANTHROPIC_API_KEY) {
+  if (!process.env.OPENROUTER_API_KEY) {
     return Response.json(
-      { error: "ANTHROPIC_API_KEY n'est pas configurée sur le serveur. Ajoutez-la dans .env pour activer le copilote." },
+      { error: "OPENROUTER_API_KEY n'est pas configurée sur le serveur. Ajoutez-la dans .env pour activer le copilote." },
       { status: 503 }
     );
   }
@@ -74,21 +84,17 @@ export async function POST(request: Request) {
 
   const dataContext = JSON.stringify({ snapshot, bottleneck }, null, 0);
 
-  const response = await client.messages.create({
-    model: "claude-opus-4-8",
+  const response = await client.chat.completions.create({
+    model: OPENROUTER_MODEL,
     max_tokens: 4096,
-    thinking: { type: "adaptive" },
-    system: [
-      { type: "text", text: systemPrompt(role), cache_control: { type: "ephemeral" } },
-      { type: "text", text: `DONNÉES (snapshot + analyse de goulots, période ${body.dateFrom} → ${body.dateTo}) :\n${dataContext}` },
+    messages: [
+      { role: "system", content: systemPrompt(role) },
+      { role: "system", content: `DONNÉES (snapshot + analyse de goulots, période ${body.dateFrom} → ${body.dateTo}) :\n${dataContext}` },
+      ...body.messages.map((m) => ({ role: m.role, content: m.content })),
     ],
-    messages: body.messages.map((m) => ({ role: m.role, content: m.content })),
   });
 
-  const reply = response.content
-    .filter((block): block is Anthropic.TextBlock => block.type === "text")
-    .map((block) => block.text)
-    .join("\n\n");
+  const reply = response.choices[0]?.message?.content ?? "";
 
   return Response.json({ reply });
 }

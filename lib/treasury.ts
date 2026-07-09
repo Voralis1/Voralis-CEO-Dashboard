@@ -1,4 +1,4 @@
-import { aggregateCodNetworksByCountry, aggregateAdSpendByCountry, type OutOfScopeAdSpend } from "@/lib/profitability";
+import { aggregateCodNetworksByCountry, aggregateAdSpendByCountry } from "@/lib/profitability";
 import { fetchMetaAdsByCountry } from "@/lib/supabase/queries";
 import { fetchPublicMarketSettings, type PublicMarketSettings } from "@/lib/marketSettings";
 import { fetchFieldCashRecap, resolveFraisLivraison, type FieldCashRecap } from "@/lib/fieldCash";
@@ -35,7 +35,6 @@ export interface CashOutRow {
 
 export interface TreasuryCashData {
   cashByCountry: CashEncaisseRow[];
-  outOfScopeAdSpend: OutOfScopeAdSpend[];
   cashOutByCountry: CashOutRow[];
   affiliatePayoutError: string | null;
 }
@@ -113,9 +112,21 @@ export async function fetchTreasuryCashData(dateFrom: string, dateTo: string): P
     });
   }
 
+  // Pays hors périmètre COD (ex. Burkina Faso) : pas de market_settings, donc pas de FX/devise
+  // locale possible — affiché directement en USD (devise native de Meta Ads) plutôt qu'exclu.
+  for (const { country, spendUsd } of outOfScopeAdSpend) {
+    if (spendUsd === 0) continue;
+    cashOutByCountry.push({
+      countryName: country,
+      currency: "USD",
+      adSpendLocal: spendUsd,
+      payoutAffilieLocal: 0,
+      total: spendUsd,
+    });
+  }
+
   return {
     cashByCountry: cashByCountry.sort((a, b) => b.caLivre - a.caLivre),
-    outOfScopeAdSpend,
     cashOutByCountry: cashOutByCountry.sort((a, b) => b.total - a.total),
     affiliatePayoutError: affiliatePayout.error,
   };

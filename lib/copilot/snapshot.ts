@@ -3,7 +3,7 @@ import { getCanonicalCountry } from "@/lib/countries";
 import { computeBaseMargin, finalizeMargin, type MarginBreakdown } from "@/lib/margin";
 import { resolveFraisLivraison, type FieldCashRecap } from "@/lib/fieldCash";
 import { fetchFieldCashRecap as fetchFieldCashRecapServer } from "@/lib/fieldCashServer";
-import { fetchPublicMarketSettings, type MarketSettings } from "@/lib/marketSettings";
+import type { MarketSettings } from "@/lib/marketSettings";
 import { computeAllThresholds, stripCeoDetail, type ThresholdRow } from "@/lib/thresholds";
 import { computeInventoryThreshold, daysBetweenInclusive } from "@/lib/inventory";
 import type { UserRole } from "@/lib/auth/role";
@@ -413,16 +413,18 @@ export interface CopilotSnapshot {
 export async function buildCopilotSnapshot(dateFrom: string, dateTo: string, role: UserRole): Promise<CopilotSnapshot> {
   const nbJours = daysBetweenInclusive(dateFrom, dateTo);
 
-  const [marketSettingsRes, publicSettings, adSpend, affiliateData, thresholds] = await Promise.all([
+  const [marketSettingsRes, adSpend, affiliateData, thresholds] = await Promise.all([
     supabaseAdmin.from("market_settings").select("*").order("pays"),
-    fetchPublicMarketSettings(),
     fetchAdSpendUsdByCountry(dateFrom, dateTo),
     fetchAffiliateData(dateFrom, dateTo),
     computeAllThresholds(dateFrom, dateTo),
   ]);
 
   const marketSettingsList = (marketSettingsRes.data ?? []) as MarketSettings[];
-  const currencyByCountry = new Map<string, string>(publicSettings.map((s) => [s.pays, s.devise_locale] as [string, string]));
+  // Dérivé directement de marketSettingsList (déjà chargé via supabaseAdmin) — jamais
+  // fetchPublicMarketSettings(), qui utilise une URL relative et ne fonctionne que dans un
+  // contexte navigateur. Ce module est serveur uniquement (voir commentaire ci-dessus).
+  const currencyByCountry = new Map<string, string>(marketSettingsList.map((s) => [s.pays, s.devise_locale] as [string, string]));
 
   const funnelRows = await fetchNetworkFunnelRows(dateFrom, dateTo, currencyByCountry);
   const stockByCountry = await fetchStockByCountry(dateFrom, dateTo, nbJours);

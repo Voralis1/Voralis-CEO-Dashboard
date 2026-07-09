@@ -31,9 +31,11 @@ export type InventoryUpdate = Partial<Pick<InventoryRow, "delai_appro_jours" | "
 export interface StockCrmRow {
   id: string;
   produit: string;
-  pays: string | null; // null = code pays CRM non reconnu (hors périmètre COD)
-  quantiteStock: number;
-  status: string;
+  // Nom canonique si le code CRM correspond à un des 7 marchés COD, sinon le code brut renvoyé
+  // par le CRM tel quel (ex. "BF") — tous les produits sont affichés, y compris hors périmètre COD.
+  pays: string;
+  quantiteStock: number | null;
+  status: string | null;
 }
 
 export async function fetchCrmStock(): Promise<StockCrmRow[]> {
@@ -42,10 +44,10 @@ export async function fetchCrmStock(): Promise<StockCrmRow[]> {
   const json = await res.json();
   if (!json.success) throw new Error(json.message ?? "Erreur CRM Voralis (stock)");
 
-  return (json.products as { id: string; name: string; country: string; quantity: number; status: string }[]).map((p) => ({
+  return (json.products as { id: string; name: string; country: string; quantity: number | null; status: string | null }[]).map((p) => ({
     id: p.id,
     produit: p.name,
-    pays: getCanonicalCountry(p.country)?.name ?? null,
+    pays: getCanonicalCountry(p.country)?.name ?? p.country,
     quantiteStock: p.quantity,
     status: p.status,
   }));

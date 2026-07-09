@@ -6,7 +6,7 @@ import { useFilters } from "@/lib/filters";
 import { fmtCurrency } from "@/lib/dashboardData";
 import { COUNTRY_FLAGS } from "@/lib/countries";
 import { fetchTreasuryCashData, type TreasuryCashData } from "@/lib/treasury";
-import { AlertTriangle, Loader2, Info } from "lucide-react";
+import { AlertTriangle, Loader2 } from "lucide-react";
 
 // Trésorerie (2026-07-08) : plus aucune saisie manuelle sur cet écran. "Cash chez qui" et
 // "Cash Out" (salaires locaux/autre) ont été retirés — l'Angola a désormais Field Cash
@@ -108,15 +108,6 @@ export default function TresoreriePage() {
 
         {/* ═══ Cash Out ═══ */}
         <Section title="Cash Out par pays">
-          <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 text-xs mb-3">
-            <Info size={14} className="shrink-0 mt-0.5" />
-            <p>
-              Payout affilié (colonne dédiée) inclus dans le total depuis le CRM Voralis — c&apos;est un montant <strong>accru</strong> sur
-              les commandes confirmées/livrées de la période, pas une date de décaissement réelle (le CRM n&apos;expose aucune
-              date de paiement affilié). Aucune charge de livraison/call center séparée : incluse dans les 11$ (externe) ou dans
-              Field Cash (Angola, voir /ceo/field-cash-angola).
-            </p>
-          </div>
           {cashData.affiliatePayoutError && (
             <div className="flex items-center gap-2 p-3 mb-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs">
               <AlertTriangle size={12} />
@@ -154,13 +145,6 @@ export default function TresoreriePage() {
               </tbody>
             </table>
           </div>
-
-          {cashData.outOfScopeAdSpend.length > 0 && (
-            <p className="text-xs text-amber-600 mt-3">
-              Dépense Meta Ads hors périmètre COD (pas de market_settings, non incluse ci-dessus) :{" "}
-              {cashData.outOfScopeAdSpend.map((o) => `${o.country} ($${o.spendUsd.toFixed(0)})`).join(", ")}
-            </p>
-          )}
         </Section>
       </div>
     </div>
