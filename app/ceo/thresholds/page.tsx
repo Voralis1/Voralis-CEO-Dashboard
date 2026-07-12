@@ -109,16 +109,6 @@ export default function ThresholdsPage() {
       />
 
       <div className="px-6 py-5 space-y-5">
-        <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 text-xs">
-          <Info size={14} className="shrink-0 mt-0.5" />
-          <p>
-            On juge sur <strong>livré + rentabilité</strong>, jamais sur le taux de confirmation seul (indicatif uniquement).
-            Les plafonds (CPL max, payout max) sont des cibles de RÉFÉRENCE (conf%/DR%/T saisis dans market_settings) ; le
-            &ldquo;réel&rdquo; comparé (CPL réel, payout réel) est calculé sur la période du filtre date ci-dessus — CPL réel
-            (Meta Ads) et payout réel (CRM) respectent tous les deux la période sélectionnée.
-          </p>
-        </div>
-
         {!isCeo && (
           <div className="flex items-start gap-2 p-3 rounded-lg bg-slate-50 border border-slate-200 text-slate-600 text-xs">
             <Lock size={14} className="shrink-0 mt-0.5" />

@@ -154,20 +154,6 @@ export default function CrmVoralisPage() {
       />
 
       <div className="px-6 py-5 space-y-5">
-        <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 text-xs">
-          <Info size={14} className="shrink-0 mt-0.5" />
-          <p>
-            On juge sur <strong>livré + rentabilité</strong>, jamais sur le taux de confirmation seul. Le coût payout, lui,
-            est calculé par commande <strong>confirmée</strong> (pas livrée) : c&apos;est à la confirmation que le payout est dû
-            dans ce business — exception valable uniquement pour ce coût. La rentabilité nette (revenu net livraison − payout −
-            COGS − retours ; le call center est déjà inclus dans les frais de livraison, pas une ligne séparée) reste{" "}
-            <strong>incomplète</strong> : le CRM ne fournit pas encore le CA livré encaissé
-            par affilié/pays, seulement les comptages et le payout (en USD, sans conversion). Dès que ce CA sera branché, la
-            marge se calculera automatiquement en USD (comme le payout), via FX pour convertir le CA local — cohérent avec
-            /profitability.
-          </p>
-        </div>
-
         {/* ═══ Par affilié ═══ */}
         <Section title={`Leaderboard par affilié (${data.totals.affiliates})`}>
           <div className="overflow-x-auto">

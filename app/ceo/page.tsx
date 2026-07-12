@@ -118,7 +118,7 @@ export default function TresoreriePage() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-slate-200">
-                  {["Pays", "Ad spend réel (converti)", "Payout affilié (CRM)", "Total"].map((h) => (
+                  {["Pays", "Ad spend réel (converti)", "Payout affilié (CRM)", "COGS", "Frais logistique", "Total"].map((h) => (
                     <th key={h} className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -134,12 +134,14 @@ export default function TresoreriePage() {
                     </td>
                     <td className="px-3 py-3 text-slate-700">{fmtCurrency(r.adSpendLocal, r.currency)}</td>
                     <td className="px-3 py-3 text-slate-700">{fmtCurrency(r.payoutAffilieLocal, r.currency)}</td>
+                    <td className="px-3 py-3 text-slate-700">{fmtCurrency(r.cogsLocal, r.currency)}</td>
+                    <td className="px-3 py-3 text-slate-700">{fmtCurrency(r.fraisLogistiqueLocal, r.currency)}</td>
                     <td className="px-3 py-3 font-semibold text-red-600">{fmtCurrency(r.total, r.currency)}</td>
                   </tr>
                 ))}
                 {cashData.cashOutByCountry.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="px-3 py-4 text-center text-slate-500">Aucune sortie de cash pour cette période.</td>
+                    <td colSpan={6} className="px-3 py-4 text-center text-slate-500">Aucune sortie de cash pour cette période.</td>
                   </tr>
                 )}
               </tbody>

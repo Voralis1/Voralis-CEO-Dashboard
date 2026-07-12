@@ -1,8 +1,22 @@
 import { aggregateCodNetworksByCountry, aggregateAdSpendByCountry } from "@/lib/profitability";
-import { fetchMetaAdsByCountry } from "@/lib/supabase/queries";
+import {
+  fetchMetaAdsByCountry,
+  fetchClickMarketShipments,
+  fetchColiscodShipments,
+  fetchAfricodCongoShipments,
+  fetchShipsenExpeditions,
+} from "@/lib/supabase/queries";
 import { fetchPublicMarketSettings, type PublicMarketSettings } from "@/lib/marketSettings";
 import { fetchFieldCashRecap, resolveFraisLivraison, type FieldCashRecap } from "@/lib/fieldCash";
 import { getCanonicalCountry } from "@/lib/countries";
+
+// COGS Trésorerie (2026-07) — distinct de market_settings.cogs_produit (coût par COMMANDE
+// livrée, utilisé par /profitability) : ici c'est un coût par UNITÉ DE PRODUIT expédiée,
+// (coût de production + frais de livraison fournisseur→warehouse) × quantité envoyée sur la
+// période, tous produits confondus par pays. Constantes CEO, USD, converties en devise locale
+// comme le reste (fx_to_usd).
+const COGS_PRODUCTION_UNIT_USD = 7;
+const COGS_SHIPPING_UNIT_USD = 8;
 
 // Cash encaissé par pays — base "livré + encaissé" (Prompt 1bis : le filtre date de dateFrom/
 // dateTo est déjà appliqué sur la date de LIVRAISON via lib/providerKpi.ts, pas la création).
@@ -30,6 +44,15 @@ export interface CashOutRow {
   // livrées de la période, pas une date de décaissement réelle (le CRM n'expose aucune date de
   // paiement affilié).
   payoutAffilieLocal: number;
+  // Coût produit expédié (production + livraison fournisseur→warehouse) × quantité envoyée sur
+  // la période — voir COGS_PRODUCTION_UNIT_USD/COGS_SHIPPING_UNIT_USD ci-dessus. Distinct du
+  // frais logistique ci-dessous (qui lui porte sur la LIVRAISON commande→client).
+  cogsLocal: number;
+  // Frais logistique commande→client : 11$/livraison (deliveryFeeLocal) pour les 6 réseaux
+  // externes, frais interne + charges externes (Field Cash) pour l'Angola — même calcul que
+  // "Frais livraison" de Cash encaissé (resolveFraisLivraison), affiché ici comme sortie de
+  // cash explicite plutôt que seulement netté contre le CA livré encaissé.
+  fraisLogistiqueLocal: number;
   total: number;
 }
 
@@ -60,12 +83,35 @@ async function fetchAffiliatePayoutUsdByCountry(dateFrom: string, dateTo: string
   }
 }
 
+// Quantité envoyée (Qté envoyée, stock entrant fournisseur→warehouse), agrégée par pays
+// canonique et sommée sur les 4 réseaux logistiques + Shipsen — même tables que la page Stock &
+// Inventaire (lib/supabase/queries.ts), filtrées sur la même période que le reste de la
+// Trésorerie. "Envoyée" (pas "arrivée") : le coût de production/livraison fournisseur est déjà
+// engagé dès l'expédition, qu'elle arrive intacte ou non (décision CEO, 2026-07).
+async function fetchQuantitySentByCountry(dateFrom: string, dateTo: string): Promise<Map<string, number>> {
+  const [cm, cs, ac, se] = await Promise.all([
+    fetchClickMarketShipments(dateFrom, dateTo),
+    fetchColiscodShipments(dateFrom, dateTo),
+    fetchAfricodCongoShipments(dateFrom, dateTo),
+    fetchShipsenExpeditions(dateFrom, dateTo),
+  ]);
+
+  const byCountry = new Map<string, number>();
+  for (const row of [...cm, ...cs, ...ac, ...se]) {
+    const canonical = getCanonicalCountry(row.country);
+    if (!canonical) continue;
+    byCountry.set(canonical.name, (byCountry.get(canonical.name) ?? 0) + (row.quantity_sent ?? 0));
+  }
+  return byCountry;
+}
+
 export async function fetchTreasuryCashData(dateFrom: string, dateTo: string): Promise<TreasuryCashData> {
-  const [aggregated, marketSettingsList, metaAdsRows, affiliatePayout] = await Promise.all([
+  const [aggregated, marketSettingsList, metaAdsRows, affiliatePayout, quantitySentByCountry] = await Promise.all([
     aggregateCodNetworksByCountry(dateFrom, dateTo),
     fetchPublicMarketSettings(),
     fetchMetaAdsByCountry(dateFrom, dateTo),
     fetchAffiliatePayoutUsdByCountry(dateFrom, dateTo),
+    fetchQuantitySentByCountry(dateFrom, dateTo),
   ]);
 
   const marketSettingsByPays = new Map<string, PublicMarketSettings>(marketSettingsList.map((s) => [s.pays, s]));
@@ -101,19 +147,37 @@ export async function fetchTreasuryCashData(dateFrom: string, dateTo: string): P
     const payoutAffilieUsd = affiliatePayout.byCountry.get(settings.pays) ?? 0;
     const payoutAffilieLocal = payoutAffilieUsd * settings.fx_to_usd;
 
-    if (adSpendLocal === 0 && payoutAffilieLocal === 0) continue; // rien à afficher pour ce pays
+    const quantitySent = quantitySentByCountry.get(settings.pays) ?? 0;
+    const cogsLocal = (COGS_PRODUCTION_UNIT_USD + COGS_SHIPPING_UNIT_USD) * quantitySent * settings.fx_to_usd;
+
+    // Même calcul que "Frais livraison" de Cash encaissé ci-dessus (resolveFraisLivraison) :
+    // 11$/livraison pour les 6 réseaux externes, frais interne + charges externes pour l'Angola.
+    const { livres } = aggregated.get(settings.pays) ?? { livres: 0, caLivre: 0 };
+    const { fraisLivraisonTotal, chargesExternesTotal } = resolveFraisLivraison(
+      settings,
+      livres,
+      fieldCashByPays.get(settings.pays) ?? null
+    );
+    const fraisLogistiqueLocal = (fraisLivraisonTotal ?? 0) + (chargesExternesTotal ?? 0);
+
+    if (adSpendLocal === 0 && payoutAffilieLocal === 0 && cogsLocal === 0 && fraisLogistiqueLocal === 0) continue; // rien à afficher pour ce pays
 
     cashOutByCountry.push({
       countryName: settings.pays,
       currency: settings.devise_locale,
       adSpendLocal,
       payoutAffilieLocal,
-      total: adSpendLocal + payoutAffilieLocal,
+      cogsLocal,
+      fraisLogistiqueLocal,
+      total: adSpendLocal + payoutAffilieLocal + cogsLocal + fraisLogistiqueLocal,
     });
   }
 
-  // Pays hors périmètre COD (ex. Burkina Faso) : pas de market_settings, donc pas de FX/devise
-  // locale possible — affiché directement en USD (devise native de Meta Ads) plutôt qu'exclu.
+  // Pays hors périmètre COD : pas de market_settings, donc pas de FX/devise locale possible —
+  // affiché directement en USD (devise native de Meta Ads) plutôt qu'exclu. Depuis 2026-07,
+  // Burkina Faso et Maroc ont leur propre market_settings (voir lib/countries.ts) et ne passent
+  // donc plus par cette branche — elle ne devrait plus se déclencher en pratique, gardée pour
+  // tout futur pays de prospection Meta Ads pas encore onboardé.
   for (const { country, spendUsd } of outOfScopeAdSpend) {
     if (spendUsd === 0) continue;
     cashOutByCountry.push({
@@ -121,6 +185,8 @@ export async function fetchTreasuryCashData(dateFrom: string, dateTo: string): P
       currency: "USD",
       adSpendLocal: spendUsd,
       payoutAffilieLocal: 0,
+      cogsLocal: 0,
+      fraisLogistiqueLocal: 0,
       total: spendUsd,
     });
   }

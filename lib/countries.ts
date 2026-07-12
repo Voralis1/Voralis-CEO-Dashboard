@@ -1,8 +1,9 @@
 // Source unique de vérité pour le mapping pays -> devise -> drapeau.
-// Les 7 marchés COD pilotés par ce dashboard, mapping devise validé avec le CEO
-// (voir supabase/market_settings_schema.sql, où ce mapping est aussi verrouillé en DB).
-// Toute nouvelle occurrence d'orthographe pays doit être ajoutée en alias ici,
-// jamais recodée dans une page ou un module.
+// Les marchés pilotés par ce dashboard (7 marchés COD à réseau logistique + Burkina Faso +
+// Maroc, ce dernier sans réseau logistique — voir commentaire plus bas), mapping devise validé
+// avec le CEO (voir supabase/market_settings_schema.sql + market_settings_add_bf_maroc_migration.sql,
+// où ce mapping est aussi verrouillé en DB). Toute nouvelle occurrence d'orthographe pays doit
+// être ajoutée en alias ici, jamais recodée dans une page ou un module.
 
 export interface CanonicalCountry {
   name: string;
@@ -23,13 +24,14 @@ export const CANONICAL_COUNTRIES: CanonicalCountry[] = [
   { name: "Guinée", currency: "GNF", flag: "🇬🇳", aliases: ["Guinée", "Guinea", "GN", "GIN"] },
   { name: "Sénégal", currency: "XOF", flag: "🇸🇳", aliases: ["Sénégal", "Senegal", "SN", "SEN"] },
   { name: "Côte d'Ivoire", currency: "XOF", flag: "🇨🇮", aliases: ["Côte d'Ivoire", "Cote d'Ivoire", "CI", "CIV"] },
+  // Ajoutés 2026-07 : Burkina Faso rejoint le périmètre COD (déjà présent côté Meta Ads sous
+  // l'alias "BF") — voir supabase/market_settings_add_bf_maroc_migration.sql pour le FX/coûts.
+  // Maroc reste sans réseau logistique (source d'expéditions produit + marché Meta Ads
+  // prospection uniquement), mais a désormais sa vraie devise pour la Trésorerie plutôt que
+  // d'être affiché en USD par défaut (cf. lib/treasury.ts, branche hors-périmètre).
+  { name: "Burkina Faso", currency: "XOF", flag: "🇧🇫", aliases: ["Burkina Faso", "Burkina", "BF", "BFA"] },
+  { name: "Maroc", currency: "MAD", flag: "🇲🇦", aliases: ["Maroc", "Morocco", "MA", "MAR"] },
 ];
-
-// Pays visibles uniquement côté Meta Ads (hors périmètre COD / market_settings) —
-// drapeau d'affichage seulement, jamais de devise/FX associée.
-const DISPLAY_ONLY_FLAGS: Record<string, string> = {
-  Maroc: "🇲🇦",
-};
 
 const aliasToCanonical = new Map<string, CanonicalCountry>();
 for (const country of CANONICAL_COUNTRIES) {
@@ -48,7 +50,6 @@ export function getCountryCurrency(nameOrAlias: string): string {
   return aliasToCanonical.get(nameOrAlias)?.currency ?? "";
 }
 
-export const COUNTRY_FLAGS: Record<string, string> = {
-  ...DISPLAY_ONLY_FLAGS,
-  ...Object.fromEntries(CANONICAL_COUNTRIES.flatMap((c) => c.aliases.map((alias) => [alias, c.flag]))),
-};
+export const COUNTRY_FLAGS: Record<string, string> = Object.fromEntries(
+  CANONICAL_COUNTRIES.flatMap((c) => c.aliases.map((alias) => [alias, c.flag]))
+);

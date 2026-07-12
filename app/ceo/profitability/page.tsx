@@ -96,11 +96,8 @@ export default function ProfitabilityPage() {
         <div className="grid grid-cols-2 gap-4">
           <Section title="Total livrées (tous canaux)">
             <p className="text-3xl font-bold text-emerald-600 mt-2">{totalLivres.toLocaleString("fr-FR")}</p>
-            <p className="text-xs text-slate-500 mt-1">
-              {totalLivresMediaBuying.toLocaleString("fr-FR")} Media Buying Interne + {totalLivresAffiliates.toLocaleString("fr-FR")} Affiliés
-            </p>
           </Section>
-          <Section title="CA livré encaissé par pays (Media Buying Interne)">
+          <Section title="CA livré encaissé par pays">
             <div className="space-y-1 mt-2">
               {data.mediaBuying.map((r) => (
                 <p key={r.countryName} className="text-sm text-slate-700">
@@ -200,15 +197,6 @@ export default function ProfitabilityPage() {
               {data.affiliatesError}
             </div>
           )}
-          <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs mb-3">
-            <Info size={14} className="shrink-0 mt-0.5" />
-            <p>
-              Le payout est désormais exact et fiable (somme des commissions réelles en USD, confirmé le 2026-07-06) — payé à
-              la commande <strong>confirmée</strong>, pas livrée. Seul le CA livré encaissé par réseau affilié reste absent de
-              l&apos;API CRM Voralis (ni pays, ni devise associés) : impossible de calculer un revenu net de livraison ou une
-              marge tant que cette dépendance n&apos;est pas branchée depuis le CRM (prévu séparément).
-            </p>
-          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
