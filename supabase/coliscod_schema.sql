@@ -29,6 +29,7 @@ create index if not exists coliscod_leads_order_date_idx on coliscod_leads (orde
 
 alter table coliscod_leads enable row level security;
 
+drop policy if exists "Allow read for authenticated users" on coliscod_leads;
 create policy "Allow read for authenticated users"
   on coliscod_leads for select
   to authenticated
@@ -79,6 +80,17 @@ group by country_id;
 --                       ligne, jamais une addition des deux — pas de double comptage possible)
 --   - en_attente      : tout lead ni livré, ni annulé, ni doublon — inclut "pending", "remind",
 --                       "unreached" et "confirmé mais pas encore livré"
+--   - confirmes/taux_confirmation/en_attente/rupture_stock : conservés tels quels (funnel de
+--                       confirmation) — utilisés par les alertes de la page d'accueil
+--                       (lib/dashboardData.ts), pas affichés dans le tableau Réseaux
+--                       Logistiques/COD depuis 2026-07.
+--   - livres/taux_livraison/ca_livre/annulees/retournees : redéfinis sur shipping_status
+--                       (2026-07), même mapping que ClickMarket/Africod Congo (audité sur
+--                       données réelles) : shipping_status='processed' = livré + encaissé,
+--                       'cancelled' = annulée, 'return' = retournée. ca_livre déduit 11$ de
+--                       frais de livraison fixe par commande livrée. taux_livraison passe de
+--                       livres/confirmes à livres/total_leads.
+drop function if exists kpi_coliscod_marche_periode(date, date);
 create or replace function kpi_coliscod_marche_periode(date_from date, date_to date)
 returns table (
   country_id integer,
@@ -92,7 +104,8 @@ returns table (
   en_attente bigint,
   annulees bigint,
   rupture_stock bigint,
-  doublons bigint
+  doublons bigint,
+  retournees bigint
 )
 language sql
 security invoker
@@ -104,9 +117,10 @@ as $$
       max(country_name) as country_name,
       count(*) as total_leads,
       count(*) filter (where confirmation_status = 'confirmed') as confirmes,
-      count(*) filter (where delivered_at is not null) as livres,
+      count(*) filter (where shipping_status = 'processed') as livres,
       count(*) filter (where confirmation_status = 'double') as doublons,
-      count(*) filter (where confirmation_status = 'cancelled' or shipping_status = 'cancelled') as annulees,
+      count(*) filter (where shipping_status = 'cancelled') as annulees,
+      count(*) filter (where shipping_status = 'return') as retournees,
       count(*) filter (
         where delivered_at is null
           and confirmation_status is distinct from 'cancelled'
@@ -121,9 +135,10 @@ as $$
     select
       country_id,
       max(country_name) as country_name,
-      coalesce(sum(total_price), 0) as ca_livre
+      coalesce(sum(total_price), 0) - 11 * count(*) as ca_livre
     from coliscod_leads
-    where delivered_at is not null
+    where shipping_status = 'processed'
+      and delivered_at is not null
       and delivered_at::date between date_from and date_to
     group by country_id
   )
@@ -134,12 +149,13 @@ as $$
     coalesce(f.confirmes, 0) as confirmes,
     round(100.0 * coalesce(f.confirmes, 0) / nullif(f.total_leads, 0), 1) as taux_confirmation,
     coalesce(f.livres, 0) as livres,
-    round(100.0 * coalesce(f.livres, 0) / nullif(f.confirmes, 0), 1) as taux_livraison,
+    round(100.0 * coalesce(f.livres, 0) / nullif(f.total_leads, 0), 1) as taux_livraison,
     coalesce(r.ca_livre, 0) as ca_livre,
     coalesce(f.en_attente, 0) as en_attente,
     coalesce(f.annulees, 0) as annulees,
     0 as rupture_stock,
-    coalesce(f.doublons, 0) as doublons
+    coalesce(f.doublons, 0) as doublons,
+    coalesce(f.retournees, 0) as retournees
   from funnel f
   full outer join revenu_livre r on r.country_id = f.country_id;
 $$;

@@ -1,0 +1,88 @@
+{
+  "name": "ClickMarket Shipments → Supabase sync",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "e1e1e1e1-0001-4000-8000-000000000001",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-640, 0]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cfg-1",
+              "name": "clickmarket_email",
+              "value": "COLLEZ_VOTRE_EMAIL_CLICKMARKET_ICI",
+              "type": "string"
+            },
+            {
+              "id": "cfg-2",
+              "name": "clickmarket_password",
+              "value": "COLLEZ_VOTRE_MOT_DE_PASSE_CLICKMARKET_ICI",
+              "type": "string"
+            },
+            {
+              "id": "cfg-3",
+              "name": "supabase_url",
+              "value": "https://VOTRE-PROJET.supabase.co",
+              "type": "string"
+            },
+            {
+              "id": "cfg-4",
+              "name": "supabase_service_role_key",
+              "value": "COLLEZ_VOTRE_SUPABASE_SERVICE_ROLE_KEY_ICI",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "e1e1e1e1-0002-4000-8000-000000000002",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-400, 0],
+      "notes": "Mêmes identifiants ClickMarket que n8n/clickmarket-sync.workflow.json (le compte donne accès à /product-shipments avec le même token) — workflow séparé pour ne pas mélanger commandes et stock entrant dans le même nœud."
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $input.item.json;\n\nconst CM_BASE = \"https://clickmarket-backend-8scjo.ondigitalocean.app/api\";\nconst SUPABASE_URL = cfg.supabase_url;\nconst SUPABASE_SERVICE_ROLE_KEY = cfg.supabase_service_role_key;\nconst PER_PAGE = 100;\nconst UPSERT_BATCH_SIZE = 500;\n\n// ─── 1. Login — le token Bearer de ClickMarket n'est pas fiable dans la\n// durée, on se reconnecte donc à chaque exécution du workflow.\nconst loginRes = await this.helpers.httpRequest({\n  method: \"POST\",\n  url: `${CM_BASE}/login`,\n  headers: { \"Content-Type\": \"application/json\", Accept: \"application/json\" },\n  body: {\n    email: cfg.clickmarket_email,\n    password: cfg.clickmarket_password,\n  },\n  json: true,\n});\n\nconst token = loginRes.token;\nif (!token) {\n  throw new Error(\"ClickMarket login: aucun token reçu — vérifiez l'email/mot de passe dans le nœud 'Config'.\");\n}\n\n// La réponse de /login contient déjà les marchés accessibles au compte.\nconst countries = loginRes.countries || [];\n\n// ─── 2. Pour chaque marché, paginer /product-shipments jusqu'à la dernière page ───\nconst allRows = [];\n\nfor (const country of countries) {\n  let page = 1;\n  let lastPage = 1;\n\n  do {\n    const res = await this.helpers.httpRequest({\n      method: \"GET\",\n      url: `${CM_BASE}/product-shipments`,\n      qs: { per_page: PER_PAGE, page },\n      headers: {\n        Authorization: `Bearer ${token}`,\n        Accept: \"application/json\",\n        \"X-Selected-Country\": JSON.stringify({\n          id: country.id,\n          name: country.name,\n          currency: country.currency,\n        }),\n      },\n      json: true,\n    });\n\n    lastPage = res.pagination?.last_page ?? 1;\n\n    for (const s of res.productShipments || []) {\n      const countryName = s.warehouse?.country?.name ?? country.name;\n\n      for (const item of s.shipment_items || []) {\n        allRows.push({\n          item_id: item.id,\n          shipment_id: s.id,\n          country: countryName,\n          product_name: item.product?.name ?? \"Inconnu\",\n          shipment_date: s.shipment_date ?? null,\n          arrival_date: s.arrival_date ?? null,\n          source_country: s.source_country ?? null,\n          quantity_sent: item.quantity_sent ?? null,\n          quantity_arrived: item.quantity_arrived ?? null,\n          quantity_defected: item.quantity_defected ?? null,\n          status: s.shipment_status ?? null,\n        });\n      }\n    }\n\n    page += 1;\n  } while (page <= lastPage);\n}\n\n// ─── 3. Upsert en masse vers Supabase, par lots de 500 lignes ──────────────\n// Dédup par item_id d'abord : la pagination peut chevaucher deux pages (un shipment modifié\n// pendant le scan complet), et on ne veut pas que la même ligne apparaisse deux fois dans un\n// même lot (Postgres refuse \"ON CONFLICT DO UPDATE ... affect row a second time\" dans ce cas —\n// déjà observé en production sur les workflows de commandes). On garde la dernière occurrence.\nconst dedupedRows = Array.from(new Map(allRows.map((r) => [r.item_id, r])).values());\n\nlet upserted = 0;\n\nfor (let i = 0; i < dedupedRows.length; i += UPSERT_BATCH_SIZE) {\n  const batch = dedupedRows.slice(i, i + UPSERT_BATCH_SIZE);\n\n  await this.helpers.httpRequest({\n    method: \"POST\",\n    url: `${SUPABASE_URL}/rest/v1/clickmarket_shipments`,\n    headers: {\n      \"Content-Type\": \"application/json\",\n      apikey: SUPABASE_SERVICE_ROLE_KEY,\n      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,\n      Prefer: \"resolution=merge-duplicates,return=minimal\",\n    },\n    body: batch,\n    json: true,\n  });\n\n  upserted += batch.length;\n}\n\nreturn [\n  {\n    json: {\n      synced_items: upserted,\n      markets: countries.map((c) => c.name),\n      finished_at: new Date().toISOString(),\n    },\n  },\n];"
+      },
+      "id": "e1e1e1e1-0003-4000-8000-000000000003",
+      "name": "Sync ClickMarket Shipments → Supabase",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-160, 0],
+      "notes": "Login, détection des marchés, pagination complète de /product-shipments, aplatissement des shipment_items (un shipment peut contenir plusieurs produits), dédup par item_id, et upsert Supabase par lots de 500."
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Config", "type": "main", "index": 0 }]]
+    },
+    "Config": {
+      "main": [[{ "node": "Sync ClickMarket Shipments → Supabase", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

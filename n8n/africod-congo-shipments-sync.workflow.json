@@ -1,0 +1,88 @@
+{
+  "name": "Africod Congo Shipments → Supabase sync",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "e3e3e3e3-0001-4000-8000-000000000001",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-640, 0]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cfg-1",
+              "name": "africod_congo_email",
+              "value": "COLLEZ_L_EMAIL_AFRICOD_CONGO_ICI",
+              "type": "string"
+            },
+            {
+              "id": "cfg-2",
+              "name": "africod_congo_password",
+              "value": "COLLEZ_LE_MOT_DE_PASSE_ICI",
+              "type": "string"
+            },
+            {
+              "id": "cfg-3",
+              "name": "supabase_url",
+              "value": "https://VOTRE-PROJET.supabase.co",
+              "type": "string"
+            },
+            {
+              "id": "cfg-4",
+              "name": "supabase_service_role_key",
+              "value": "COLLEZ_VOTRE_SUPABASE_SERVICE_ROLE_KEY_ICI",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "e3e3e3e3-0002-4000-8000-000000000002",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-400, 0],
+      "notes": "Mêmes identifiants AfriqueCOD que n8n/africod-congo-sync.workflow.json — workflow séparé pour ne pas mélanger commandes et stock entrant dans le même nœud."
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $input.item.json;\n\nconst BASE = \"https://api.afriquecod.com/api\";\nconst ORIGIN = \"https://manager.afriquecod.com\";\nconst SUPABASE_URL = cfg.supabase_url;\nconst SUPABASE_SERVICE_ROLE_KEY = cfg.supabase_service_role_key;\nconst PER_PAGE = 100;\nconst UPSERT_BATCH_SIZE = 500;\nconst PAGE_DELAY_MS = 400; // petite pause entre pages pour rester sous la limite Cloudflare (~120 req)\n\nconst USER_AGENT =\n  \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36\";\n\nconst COUNTRIES = [\n  {\n    id: 17,\n    old_id: \"65dfdf15de9227002ef02de4\",\n    name: \"Congo\",\n    currency: \"XAF\",\n    currency_exchange_rate: 1,\n    flag: \"CG\",\n    phone_code: null,\n    timezone: \"Africa/Brazzaville\",\n    created_at: \"2024-06-29T12:44:04.000000Z\",\n    updated_at: \"2024-06-29T12:44:04.000000Z\",\n    deleted_at: null,\n  },\n];\n\nfunction sleep(ms) {\n  return new Promise((resolve) => setTimeout(resolve, ms));\n}\n\nfunction bodyPreview(body) {\n  try {\n    return JSON.stringify(body).slice(0, 500);\n  } catch {\n    return String(body).slice(0, 500);\n  }\n}\n\nasync function africodLogin() {\n  const res = await this.helpers.httpRequest({\n    method: \"POST\",\n    url: `${BASE}/login`,\n    headers: {\n      \"Content-Type\": \"application/json\",\n      Accept: \"application/json\",\n      \"User-Agent\": USER_AGENT,\n      Origin: ORIGIN,\n      Referer: `${ORIGIN}/`,\n    },\n    body: { email: cfg.africod_congo_email, password: cfg.africod_congo_password },\n    json: true,\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true,\n  });\n\n  if (res.statusCode < 200 || res.statusCode >= 300) {\n    throw new Error(`POST /login → HTTP ${res.statusCode}: ${bodyPreview(res.body)}`);\n  }\n\n  const token = res.body && res.body.token;\n  if (!token) {\n    throw new Error(`POST /login → 200 mais pas de champ token: ${bodyPreview(res.body)}`);\n  }\n  return token;\n}\n\n// Retry avec backoff sur 403/429 (Cloudflare / rate limit) — jusqu'à 3 tentatives.\nasync function fetchShipmentsPage(token, country, page) {\n  let attempt = 0;\n\n  while (true) {\n    const res = await this.helpers.httpRequest({\n      method: \"GET\",\n      url: `${BASE}/product-shipments`,\n      qs: { per_page: PER_PAGE, page },\n      headers: {\n        Authorization: `Bearer ${token}`,\n        Accept: \"application/json\",\n        \"User-Agent\": USER_AGENT,\n        \"X-Selected-Country\": JSON.stringify(country),\n        Origin: ORIGIN,\n        Referer: `${ORIGIN}/`,\n      },\n      json: true,\n      returnFullResponse: true,\n      ignoreHttpStatusErrors: true,\n    });\n\n    if (res.statusCode === 403 || res.statusCode === 429) {\n      attempt += 1;\n      if (attempt > 3) {\n        throw new Error(`GET /product-shipments (page ${page}) → HTTP ${res.statusCode} après 3 tentatives: ${bodyPreview(res.body)}`);\n      }\n      await sleep(1500 * attempt);\n      continue;\n    }\n\n    if (res.statusCode < 200 || res.statusCode >= 300) {\n      throw new Error(`GET /product-shipments (page ${page}) → HTTP ${res.statusCode}: ${bodyPreview(res.body)}`);\n    }\n\n    return res.body;\n  }\n}\n\nconst allRows = [];\nconst errors = [];\nconst perCountry = [];\n\nif (!cfg.africod_congo_email || !cfg.africod_congo_password) {\n  errors.push({ country: \"ALL\", message: \"africod_congo_email / africod_congo_password manquants dans le nœud 'Config'.\" });\n} else {\n  let token = null;\n\n  try {\n    token = await africodLogin.call(this);\n  } catch (err) {\n    errors.push({ country: \"ALL\", message: `Login initial échoué — ${err.message}` });\n  }\n\n  if (token) {\n    for (const country of COUNTRIES) {\n      let fetched = 0;\n      let apiTotal = null;\n\n      try {\n        let page = 1;\n        let lastPage = 1;\n\n        do {\n          const data = await fetchShipmentsPage.call(this, token, country, page);\n          const pagination = data.pagination || {};\n          lastPage = pagination.last_page ?? 1;\n          if (apiTotal === null) apiTotal = pagination.total ?? null;\n\n          for (const s of data.productShipments || []) {\n            const countryName = s.warehouse?.country?.name ?? country.name;\n\n            for (const item of s.shipment_items || []) {\n              allRows.push({\n                item_id: item.id,\n                shipment_id: s.id,\n                country: countryName,\n                product_name: item.product?.name ?? \"Inconnu\",\n                shipment_date: s.shipment_date ?? null,\n                arrival_date: s.arrival_date ?? null,\n                source_country: s.source_country ?? null,\n                quantity_sent: item.quantity_sent ?? null,\n                quantity_arrived: item.quantity_arrived ?? null,\n                quantity_defected: item.quantity_defected ?? null,\n                status: s.shipment_status ?? null,\n              });\n              fetched += 1;\n            }\n          }\n\n          page += 1;\n          if (page <= lastPage) await sleep(PAGE_DELAY_MS);\n        } while (page <= lastPage);\n      } catch (err) {\n        errors.push({ country: country.name, message: err.message });\n      }\n\n      perCountry.push({ country: country.name, apiTotal, fetched });\n    }\n  }\n}\n\n// ─── Upsert en masse vers Supabase, par lots de 500 lignes ─────────────\nconst dedupedRows = Array.from(new Map(allRows.map((r) => [r.item_id, r])).values());\n\nlet upserted = 0;\n\nfor (let i = 0; i < dedupedRows.length; i += UPSERT_BATCH_SIZE) {\n  const batch = dedupedRows.slice(i, i + UPSERT_BATCH_SIZE);\n\n  try {\n    const res = await this.helpers.httpRequest({\n      method: \"POST\",\n      url: `${SUPABASE_URL}/rest/v1/africod_congo_shipments`,\n      headers: {\n        \"Content-Type\": \"application/json\",\n        apikey: SUPABASE_SERVICE_ROLE_KEY,\n        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,\n        Prefer: \"resolution=merge-duplicates,return=minimal\",\n      },\n      body: batch,\n      json: true,\n      returnFullResponse: true,\n      ignoreHttpStatusErrors: true,\n    });\n\n    if (res.statusCode < 200 || res.statusCode >= 300) {\n      throw new Error(`HTTP ${res.statusCode}: ${bodyPreview(res.body)}`);\n    }\n\n    upserted += batch.length;\n  } catch (err) {\n    errors.push({ country: \"SUPABASE_UPSERT\", message: `lot ${i}-${i + batch.length}: ${err.message}` });\n  }\n}\n\nreturn [\n  {\n    json: {\n      synced_items: upserted,\n      countries: COUNTRIES.map((c) => c.name),\n      perCountry,\n      errors,\n      finished_at: new Date().toISOString(),\n    },\n  },\n];"
+      },
+      "id": "e3e3e3e3-0003-4000-8000-000000000003",
+      "name": "Sync Africod Congo Shipments → Supabase",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-160, 0],
+      "notes": "Login (POST /login, token à la racine) + User-Agent navigateur + retry backoff 403/429 (Cloudflare), pagine GET /product-shipments pour le marché Congo, aplatit shipment_items, dédup par item_id, upsert Supabase par lots de 500."
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Config", "type": "main", "index": 0 }]]
+    },
+    "Config": {
+      "main": [[{ "node": "Sync Africod Congo Shipments → Supabase", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

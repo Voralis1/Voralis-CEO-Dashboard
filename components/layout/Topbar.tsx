@@ -5,9 +5,10 @@ import { RefreshCw } from "lucide-react";
 interface TopbarProps {
   title: string;
   subtitle?: string;
+  hideDateFilter?: boolean;
 }
 
-export default function Topbar({ title, subtitle }: TopbarProps) {
+export default function Topbar({ title, subtitle, hideDateFilter }: TopbarProps) {
   return (
     <header className="flex flex-col gap-3 px-6 pt-6 pb-4 border-b border-slate-200">
       <div className="flex items-start justify-between">
@@ -21,9 +22,11 @@ export default function Topbar({ title, subtitle }: TopbarProps) {
         </button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <DateRangeFilter />
-      </div>
+      {!hideDateFilter && (
+        <div className="flex flex-wrap items-center gap-3">
+          <DateRangeFilter />
+        </div>
+      )}
     </header>
   );
 }

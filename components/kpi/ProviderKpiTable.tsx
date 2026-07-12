@@ -79,11 +79,8 @@ export default function ProviderKpiTable({ provider, countryFilter }: ProviderKp
     );
   }
 
-  const sorted = [...filteredRows].sort((a, b) => b.confirmes - a.confirmes);
-  const totalConfirmes = filteredRows.reduce((s, r) => s + r.confirmes, 0);
-
-  const returnedGap = config.returnedDataStatus === false;
-  const returnedUnreliable = config.returnedDataStatus === "unreliable";
+  const sorted = [...filteredRows].sort((a, b) => b.totalLeads - a.totalLeads);
+  const totalCommandes = filteredRows.reduce((s, r) => s + r.totalLeads, 0);
 
   return (
     <>
@@ -94,16 +91,12 @@ export default function ProviderKpiTable({ provider, countryFilter }: ProviderKp
               <tr className="border-b border-slate-200">
                 {[
                   "Pays",
-                  "Leads / Commandes",
-                  "Confirmées",
-                  "Taux confirmation",
+                  "Commandes",
                   "Livrées",
                   "Taux livraison",
                   "AOV encaissé",
                   "CA livré encaissé",
-                  "En attente",
                   "Annulées",
-                  "Rupture stock",
                   "Retournées",
                   "Délai 1er contact",
                 ].map((h) => (
@@ -133,13 +126,6 @@ export default function ProviderKpiTable({ provider, countryFilter }: ProviderKp
                         <span className="block text-[10px] text-amber-600">dont {r.doublons} doublon(s)</span>
                       )}
                     </td>
-                    <td className="px-3 py-3 font-semibold text-emerald-600">{r.confirmes.toLocaleString("fr-FR")}</td>
-                    <td className="px-3 py-3">
-                      <Badge variant={(r.tauxConfirmation ?? 0) >= 50 ? "green" : (r.tauxConfirmation ?? 0) >= 30 ? "yellow" : "red"}>
-                        {r.tauxConfirmation ?? 0}%
-                      </Badge>
-                      <span className="block text-[9px] text-slate-400 mt-0.5">diagnostic funnel</span>
-                    </td>
                     <td className="px-3 py-3 text-slate-700">{r.livres.toLocaleString("fr-FR")}</td>
                     <td className="px-3 py-3">
                       <Badge variant={(r.tauxLivraison ?? 0) >= 70 ? "green" : (r.tauxLivraison ?? 0) >= 50 ? "yellow" : "red"}>
@@ -150,26 +136,11 @@ export default function ProviderKpiTable({ provider, countryFilter }: ProviderKp
                       {aov != null ? fmtCurrency(aov, r.currency) : "—"}
                     </td>
                     <td className="px-3 py-3 font-medium text-slate-900">{fmtCurrency(r.caLivre, r.currency)}</td>
-                    <td className="px-3 py-3 text-slate-700">{r.enAttente.toLocaleString("fr-FR")}</td>
                     <td className="px-3 py-3 text-slate-700">
                       {r.annulees.toLocaleString("fr-FR")}
                       <GapNote text="Motifs d'annulation non disponibles — aucune colonne reason code exposée par ce réseau." />
                     </td>
-                    <td className="px-3 py-3 text-slate-700">
-                      {r.ruptureStock > 0 ? r.ruptureStock.toLocaleString("fr-FR") : "0"}
-                    </td>
-                    <td className="px-3 py-3">
-                      {returnedGap ? (
-                        <GapBadge text="Non exposé par ce réseau — aucune colonne retour/RTO en base." />
-                      ) : (
-                        <span className="text-slate-700">
-                          {r.retournees?.toLocaleString("fr-FR") ?? 0}
-                          {returnedUnreliable && (
-                            <GapNote text="Colonne disponible (is_refunded) mais jamais renseignée à ce jour — à surveiller plutôt qu'à considérer comme fiable." />
-                          )}
-                        </span>
-                      )}
-                    </td>
+                    <td className="px-3 py-3 text-slate-700">{r.retournees.toLocaleString("fr-FR")}</td>
                     <td className="px-3 py-3">
                       <GapBadge text="Timestamp du 1er appel call center absent sur les 4 réseaux — aucune colonne ne distingue la date de réception de la date du 1er contact (confirmed_at marque la fin de la confirmation, pas la première tentative)." />
                     </td>
@@ -181,13 +152,13 @@ export default function ProviderKpiTable({ provider, countryFilter }: ProviderKp
         </div>
         <p className="text-xs text-slate-400 mt-3">
           Revenus affichés dans la devise locale de chaque pays (via market_settings) — jamais additionnés entre pays.
-          Confirmées/Taux de confirmation = indicateur de funnel uniquement ; Livrées/CA livré encaissé = seul résultat réel (règle &ldquo;livré + encaissé&rdquo;).
+          Livrées = statut &ldquo;processed&rdquo; (livré + encaissé) ; CA livré encaissé est net du frais de livraison fixe (11$/commande).
         </p>
       </Section>
 
       <div className="grid grid-cols-2 gap-4 mt-4">
-        <Section title="Total commandes confirmées">
-          <p className="text-3xl font-bold text-emerald-600 mt-2">{totalConfirmes.toLocaleString("fr-FR")}</p>
+        <Section title="Total commandes">
+          <p className="text-3xl font-bold text-emerald-600 mt-2">{totalCommandes.toLocaleString("fr-FR")}</p>
         </Section>
         <Section title="CA livré encaissé par pays">
           <div className="space-y-1 mt-2">

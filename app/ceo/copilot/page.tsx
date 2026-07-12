@@ -77,7 +77,11 @@ export default function CopilotPage() {
 
   return (
     <div>
-      <Topbar title="Copilot IA" subtitle="Analyse le funnel complet et priorise les actions vers l'objectif 50 livraisons rentables/jour" />
+      <Topbar
+        title="Copilot IA"
+        subtitle="Analyse le funnel complet et priorise les actions vers l'objectif 50 livraisons rentables/jour"
+        hideDateFilter
+      />
 
       <div className="px-6 py-5 space-y-5">
         {summary && (

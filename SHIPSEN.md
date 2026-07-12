@@ -5,9 +5,16 @@ Côte d'Ivoire) vers Supabase toutes les 30 min. Le dashboard CEO ne lit que Sup
 n'appelle jamais Shipsen directement.
 
 ```text
-n8n (toutes les 30 min) → login + GET /orders/search (4 warehouses) → upsert Supabase
-Dashboard CEO           → lit Supabase (KPI déjà calculés)          → affiche
+n8n (toutes les 30 min) → login + GET /shippings/search (4 warehouses) → upsert Supabase
+Dashboard CEO           → lit Supabase (KPI déjà calculés)            → affiche
 ```
+
+⚠️ Depuis 2026-07, la synchro lit `/shippings/search` (page "Shipping Orders") et non plus
+`/orders/search` (page "Orders") — voir `supabase/shipsen_schema.sql` pour le détail de la
+migration et le nouveau vocabulaire de statuts (`status` décrit désormais l'avancement de la
+LIVRAISON physique, pas la confirmation de la commande). Seules les commandes dont
+`order.createdAt` est postérieur au 2025-07-01 sont synchronisées (`MIN_ORDER_DATE` dans le
+workflow n8n).
 
 ## Fichiers
 
@@ -57,11 +64,14 @@ Le nœud **Code** (`Sync Shipsen → Supabase`) :
    lui-même un champ imbriqué `headers.X-Auth-Token` (contrairement à ClickMarket où le
    token est directement à la racine du corps) — le code lit donc `res.headers["X-Auth-Token"]`
    dans le JSON parsé.
-2. Pagine `GET /orders/search` pour les 4 warehouses avec ce même token, en se reconnectant
-   automatiquement si le cycle dépasse ~4 min.
-3. Aplatit chaque commande sur les colonnes de `shipsen_orders` — `country`/`currency` viennent
-   de notre config `WAREHOUSES` (ex. "Mali"), pas de `o.warehouse.country` qui est un code ISO
-   ("ML") incompatible avec le reste du système (frontend, vues SQL).
+2. Pagine `GET /shippings/search` pour les 4 warehouses avec ce même token, en se reconnectant
+   automatiquement si le cycle dépasse ~4 min. Ignore toute commande dont `order.createdAt` est
+   antérieur au 2025-07-01 (`MIN_ORDER_DATE`).
+3. Aplatit chaque shipping sur les colonnes de `shipsen_orders` — `country`/`currency` viennent
+   de notre config `WAREHOUSES` (ex. "Mali"), pas de `o.warehouse` qui n'est qu'un id Mongo brut
+   côté `/shippings/search` (sans info pays/devise). Les infos commande (client, produit,
+   montant, date de création) viennent du sous-objet imbriqué `order`, distinct du statut/des
+   dates de livraison qui vivent au niveau du shipping lui-même.
 4. Déduplique par `mongo_id` (au cas où deux pages se chevaucheraient si des commandes arrivent
    pendant la pagination), puis upsert par lots de 500 lignes vers `POST
    {supabase_url}/rest/v1/shipsen_orders` (`Prefer: resolution=merge-duplicates,return=minimal`).
@@ -91,8 +101,12 @@ champ `errors` en sortie du nœud Code — plutôt que de laisser planter tout l
 - Les revenus ne sont **jamais** additionnés entre pays : Mali / Sénégal / Côte d'Ivoire
   facturent en XOF, la Guinée en GNF. Seul le nombre de commandes confirmées est agrégé
   globalement (`shipsen_kpi_global.total_confirmed_orders`).
-- `status = 'Confirmed'` est la seule définition de "commande confirmée" utilisée ici,
-  comparée directement sur `status.name` (pas d'appel à `/status/get`).
+- `status` (chaîne simple en minuscules côté `/shippings/search` — `queued`, `received`,
+  `reprogrammed`, `prepared`, `paid`, `processed`, `shipped`, `cancelled`, `refunded`) décrit
+  l'avancement de la LIVRAISON, pas la confirmation de la commande (qui a déjà eu lieu avant
+  qu'une commande n'apparaisse dans ce flux). "Confirmé" est donc redéfini comme "toujours
+  valide dans le pipeline" (`not in ('cancelled','refunded')`) — voir le détail du mapping dans
+  `supabase/shipsen_schema.sql`.
 - Pas de cron Vercel pour cette intégration : le workflow n8n est la seule source de
   synchro, pour éviter que deux mécanismes écrivent en même temps dans `shipsen_orders`.
 - Ne committez jamais le vrai `shipsen_password` (ni la clé `service_role`) dans une export

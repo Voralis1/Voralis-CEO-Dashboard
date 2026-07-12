@@ -152,6 +152,7 @@ export interface ClickMarketKpiRow {
   annulees: number;
   rupture_stock: number;
   doublons: number;
+  retournees: number;
 }
 
 export async function fetchClickMarketKpis(dateFrom: string, dateTo: string) {
@@ -181,6 +182,7 @@ export interface ColiscodKpiRow {
   annulees: number;
   rupture_stock: number;
   doublons: number;
+  retournees: number;
 }
 
 export async function fetchColiscodKpis(dateFrom: string, dateTo: string) {
@@ -210,6 +212,7 @@ export interface AfricodCongoKpiRow {
   annulees: number;
   rupture_stock: number;
   doublons: number;
+  retournees: number;
 }
 
 export async function fetchAfricodCongoKpis(dateFrom: string, dateTo: string) {
@@ -224,4 +227,57 @@ export async function fetchAfricodCongoKpis(dateFrom: string, dateTo: string) {
   }
 
   return (data ?? []) as AfricodCongoKpiRow[];
+}
+
+// Stock entrant (product-shipments / expeditions) — une ligne par (shipment, produit), lues
+// telles quelles depuis les tables *_shipments / shipsen_expeditions (pas d'agrégation, page
+// Stock & Inventaire). Forme commune aux 4 réseaux — voir components/inventory/ShipmentsTable.tsx.
+export interface ShipmentRow {
+  country: string;
+  product_name: string;
+  shipment_date: string | null;
+  arrival_date: string | null;
+  source_country: string | null;
+  quantity_sent: number | null;
+  quantity_arrived: number | null;
+  quantity_defected: number | null;
+  status: string | null;
+}
+
+async function fetchShipmentsFromTable(
+  table: string,
+  dateFrom?: string,
+  dateTo?: string
+): Promise<ShipmentRow[]> {
+  let query = supabase
+    .from(table)
+    .select("country, product_name, shipment_date, arrival_date, source_country, quantity_sent, quantity_arrived, quantity_defected, status");
+
+  if (dateFrom) query = query.gte("shipment_date", dateFrom);
+  if (dateTo) query = query.lte("shipment_date", dateTo);
+
+  const { data, error } = await query.order("shipment_date", { ascending: false });
+
+  if (error) {
+    console.error(`❌ Error fetching ${table}:`, error);
+    return [];
+  }
+
+  return (data ?? []) as ShipmentRow[];
+}
+
+export async function fetchClickMarketShipments(dateFrom?: string, dateTo?: string) {
+  return fetchShipmentsFromTable("clickmarket_shipments", dateFrom, dateTo);
+}
+
+export async function fetchColiscodShipments(dateFrom?: string, dateTo?: string) {
+  return fetchShipmentsFromTable("coliscod_shipments", dateFrom, dateTo);
+}
+
+export async function fetchAfricodCongoShipments(dateFrom?: string, dateTo?: string) {
+  return fetchShipmentsFromTable("africod_congo_shipments", dateFrom, dateTo);
+}
+
+export async function fetchShipsenExpeditions(dateFrom?: string, dateTo?: string) {
+  return fetchShipmentsFromTable("shipsen_expeditions", dateFrom, dateTo);
 }

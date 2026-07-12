@@ -3,24 +3,42 @@ import { useEffect, useMemo, useState } from "react";
 import Topbar from "@/components/layout/Topbar";
 import { Section, Badge } from "@/components/ui";
 import { COUNTRY_FLAGS } from "@/lib/countries";
-import { fetchInventory, fetchCrmStock, type InventoryRow, type StockCrmRow } from "@/lib/inventory";
-import { productStatsKey } from "@/lib/inventoryByProduct";
+import { fetchCrmStock, type StockCrmRow } from "@/lib/inventory";
+import {
+  fetchClickMarketShipments,
+  fetchColiscodShipments,
+  fetchAfricodCongoShipments,
+  fetchShipsenExpeditions,
+} from "@/lib/supabase/queries";
+import ShipmentsTable from "@/components/inventory/ShipmentsTable";
 import { AlertTriangle, Loader2 } from "lucide-react";
 
 const MISSING = <span className="text-slate-400 italic">valeur manquante</span>;
 
-// Stock & Inventaire (2026-07-08) : lecture seule intégrale, tous les produits CRM Voralis
-// affichés (y compris hors périmètre COD) — plus de saisie manuelle, plus de seuil calculé
-// localement. Le statut vient directement du champ `status` de l'API CRM, pas d'un calcul
-// dérivé d'un taux de rupture ou de ventes moyennes (retirés de ce tableau).
+type SourceFilter = "all" | "crm-angola" | "clickmarket" | "coliscod" | "africod-congo" | "shipsen";
+
+const SOURCE_OPTIONS: { value: SourceFilter; label: string }[] = [
+  { value: "all", label: "Toutes les sources" },
+  { value: "crm-angola", label: "Inventaire Angola CRM" },
+  { value: "clickmarket", label: "Stock entrant — ClickMarket" },
+  { value: "coliscod", label: "Stock entrant — Coliscod Angola" },
+  { value: "africod-congo", label: "Stock entrant — Africod Congo" },
+  { value: "shipsen", label: "Stock entrant — Shipsen" },
+];
+
+// Stock & Inventaire (2026-07-08) : lecture seule intégrale des produits CRM Voralis pour
+// l'Angola — plus de saisie manuelle, plus de seuil calculé localement (délai appro/stock
+// sécurité retirés le 2026-07, ce tableau ne montre plus que la quantité et le statut CRM bruts).
+// Depuis 2026-07 : tableaux de stock ENTRANT (expéditions fournisseur → warehouse) par réseau
+// logistique en dessous, distincts de ce tableau CRM (produits en stock côté vente, pas
+// expéditions) — voir lib/supabase/queries.ts / components/inventory/ShipmentsTable.tsx.
 export default function InventoryPage() {
   const [stockRows, setStockRows] = useState<StockCrmRow[]>([]);
-  const [policyRows, setPolicyRows] = useState<InventoryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [filterPays, setFilterPays] = useState<string>("all");
   const [filterProduit, setFilterProduit] = useState("");
+  const [selectedSource, setSelectedSource] = useState<SourceFilter>("all");
 
   useEffect(() => {
     let cancelled = false;
@@ -29,11 +47,8 @@ export default function InventoryPage() {
       setLoading(true);
       setError(null);
       try {
-        const [stock, policies] = await Promise.all([fetchCrmStock(), fetchInventory()]);
-        if (!cancelled) {
-          setStockRows(stock);
-          setPolicyRows(policies);
-        }
+        const stock = await fetchCrmStock();
+        if (!cancelled) setStockRows(stock);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Erreur inconnue");
       } finally {
@@ -47,18 +62,16 @@ export default function InventoryPage() {
     };
   }, []);
 
-  const policyByKey = new Map(policyRows.map((r) => [productStatsKey(r.pays, r.produit), r]));
-
-  const paysOptions = useMemo(() => [...new Set(stockRows.map((r) => r.pays))].sort(), [stockRows]);
+  // Ce tableau CRM ne couvre plus que l'Angola (demande CEO, 2026-07) — les autres pays sont
+  // couverts par les tableaux de stock entrant par réseau logistique ci-dessous.
+  const angolaRows = useMemo(() => stockRows.filter((r) => r.pays === "Angola"), [stockRows]);
 
   const filteredRows = useMemo(
     () =>
-      stockRows.filter(
-        (r) =>
-          (filterPays === "all" || r.pays === filterPays) &&
-          (filterProduit.trim() === "" || r.produit.toLowerCase().includes(filterProduit.trim().toLowerCase()))
+      angolaRows.filter(
+        (r) => filterProduit.trim() === "" || r.produit.toLowerCase().includes(filterProduit.trim().toLowerCase())
       ),
-    [stockRows, filterPays, filterProduit]
+    [angolaRows, filterProduit]
   );
 
   if (loading) {
@@ -87,11 +100,14 @@ export default function InventoryPage() {
 
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 bg-slate-50 rounded-lg p-2">
-            <label className="text-xs text-slate-500">Pays</label>
-            <select value={filterPays} onChange={(e) => setFilterPays(e.target.value)} className="px-2 py-1.5 text-xs bg-white border border-slate-300 rounded-md">
-              <option value="all">Tous les pays</option>
-              {paysOptions.map((p) => (
-                <option key={p} value={p}>{COUNTRY_FLAGS[p] ?? "🌍"} {p}</option>
+            <label className="text-xs text-slate-500">Source</label>
+            <select
+              value={selectedSource}
+              onChange={(e) => setSelectedSource(e.target.value as SourceFilter)}
+              className="px-2 py-1.5 text-xs bg-white border border-slate-300 rounded-md"
+            >
+              {SOURCE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
             </select>
           </div>
@@ -106,56 +122,64 @@ export default function InventoryPage() {
           </div>
         </div>
 
-        <Section title="Inventaire par pays / produit">
+        {(selectedSource === "all" || selectedSource === "crm-angola") && (
+        <Section title="Inventaire Angola CRM">
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-slate-200">
-                  {["Pays", "Produit", "Quantité stock", "Délai appro (j)", "Stock sécurité", "Statut"].map((h) => (
+                  {["Pays", "Produit", "Quantité stock", "Statut"].map((h) => (
                     <th key={h} className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map((stock) => {
-                  const policy = policyByKey.get(productStatsKey(stock.pays, stock.produit));
-                  return (
-                    <tr key={stock.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                      <td className="px-3 py-3">
-                        <span className="flex items-center gap-1.5 font-medium text-slate-900">
-                          <span className="text-base">{COUNTRY_FLAGS[stock.pays] ?? "🌍"}</span>
-                          {stock.pays}
-                        </span>
-                      </td>
-                      <td className="px-3 py-3 text-slate-700">{stock.produit}</td>
-                      <td className="px-3 py-3 text-slate-900 font-medium">
-                        {stock.quantiteStock != null ? stock.quantiteStock.toLocaleString("fr-FR") : MISSING}
-                      </td>
-                      <td className="px-3 py-3 text-slate-700">
-                        {policy?.delai_appro_jours != null ? policy.delai_appro_jours : MISSING}
-                      </td>
-                      <td className="px-3 py-3 text-slate-700">
-                        {policy?.stock_securite != null ? policy.stock_securite : MISSING}
-                      </td>
-                      <td className="px-3 py-3">
-                        {stock.status ? (
-                          <Badge variant={stock.status === "active" ? "green" : "gray"}>{stock.status}</Badge>
-                        ) : (
-                          MISSING
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {filteredRows.map((stock) => (
+                  <tr key={stock.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                    <td className="px-3 py-3">
+                      <span className="flex items-center gap-1.5 font-medium text-slate-900">
+                        <span className="text-base">{COUNTRY_FLAGS[stock.pays] ?? "🌍"}</span>
+                        {stock.pays}
+                      </span>
+                    </td>
+                    <td className="px-3 py-3 text-slate-700">{stock.produit}</td>
+                    <td className="px-3 py-3 text-slate-900 font-medium">
+                      {stock.quantiteStock != null ? stock.quantiteStock.toLocaleString("fr-FR") : MISSING}
+                    </td>
+                    <td className="px-3 py-3">
+                      {stock.status ? (
+                        <Badge variant={stock.status === "active" ? "green" : "gray"}>{stock.status}</Badge>
+                      ) : (
+                        MISSING
+                      )}
+                    </td>
+                  </tr>
+                ))}
                 {filteredRows.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-3 py-4 text-center text-slate-500">Aucun produit CRM pour ce filtre.</td>
+                    <td colSpan={4} className="px-3 py-4 text-center text-slate-500">Aucun produit CRM Angola pour ce filtre.</td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
         </Section>
+        )}
+
+        {/* Stock entrant (expéditions fournisseur → warehouse) par réseau logistique — distinct
+            du tableau CRM ci-dessus (produits en stock côté vente, pas expéditions). */}
+        {(selectedSource === "all" || selectedSource === "clickmarket") && (
+          <ShipmentsTable title="Stock entrant — ClickMarket" fetchRows={fetchClickMarketShipments} />
+        )}
+        {(selectedSource === "all" || selectedSource === "coliscod") && (
+          <ShipmentsTable title="Stock entrant — Coliscod Angola" fetchRows={fetchColiscodShipments} />
+        )}
+        {(selectedSource === "all" || selectedSource === "africod-congo") && (
+          <ShipmentsTable title="Stock entrant — Africod Congo" fetchRows={fetchAfricodCongoShipments} />
+        )}
+        {(selectedSource === "all" || selectedSource === "shipsen") && (
+          <ShipmentsTable title="Stock entrant — Shipsen" fetchRows={fetchShipsenExpeditions} />
+        )}
       </div>
     </div>
   );

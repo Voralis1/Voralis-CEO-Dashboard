@@ -1,0 +1,88 @@
+{
+  "name": "Shipsen Expeditions → Supabase sync",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "e4e4e4e4-0001-4000-8000-000000000001",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-640, 0]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cfg-1",
+              "name": "shipsen_email",
+              "value": "COLLEZ_L_EMAIL_SHIPSEN_ICI",
+              "type": "string"
+            },
+            {
+              "id": "cfg-2",
+              "name": "shipsen_password",
+              "value": "COLLEZ_LE_MOT_DE_PASSE_SHIPSEN_ICI",
+              "type": "string"
+            },
+            {
+              "id": "cfg-3",
+              "name": "supabase_url",
+              "value": "https://VOTRE-PROJET.supabase.co",
+              "type": "string"
+            },
+            {
+              "id": "cfg-4",
+              "name": "supabase_service_role_key",
+              "value": "COLLEZ_VOTRE_SUPABASE_SERVICE_ROLE_KEY_ICI",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "e4e4e4e4-0002-4000-8000-000000000002",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-400, 0],
+      "notes": "Mêmes identifiants Shipsen que n8n/shipsen-sync.workflow.json — workflow séparé pour ne pas mélanger commandes/shippings et stock entrant (expéditions) dans le même nœud."
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $input.item.json;\n\nconst SHIPSEN_BASE = \"https://api.shipsen.com\";\nconst SUPABASE_URL = cfg.supabase_url;\nconst SUPABASE_SERVICE_ROLE_KEY = cfg.supabase_service_role_key;\nconst LIMIT = 100;\nconst UPSERT_BATCH_SIZE = 500;\nconst TOKEN_MAX_AGE_MS = 4 * 60 * 1000; // re-login défensif si un cycle traîne\n\n// Un seul compte Shipsen (email/mot de passe) donne accès aux 4 warehouses.\nconst WAREHOUSES = [\n  { country: \"Mali\", currency: \"XOF\", warehouse: \"619ff174286e83d6aa8f60ba\" },\n  { country: \"Guinea\", currency: \"GNF\", warehouse: \"61ceeaa3d08e37d6dca5f6b9\" },\n  { country: \"Senegal\", currency: \"XOF\", warehouse: \"61cee91cd08e37d6dca5e4fb\" },\n  { country: \"CoteIvoire\", currency: \"XOF\", warehouse: \"619ed4e22c5c08be6fcfd977\" },\n];\n\nfunction findHeader(headers, name) {\n  const key = Object.keys(headers || {}).find((k) => k.toLowerCase() === name.toLowerCase());\n  return key ? headers[key] : undefined;\n}\n\nfunction bodyPreview(body) {\n  try {\n    return JSON.stringify(body).slice(0, 500);\n  } catch {\n    return String(body).slice(0, 500);\n  }\n}\n\nasync function shipsenLogin() {\n  const res = await this.helpers.httpRequest({\n    method: \"POST\",\n    url: `${SHIPSEN_BASE}/users/login`,\n    headers: { \"Content-Type\": \"application/json;charset=utf-8\" },\n    body: { email: cfg.shipsen_email, password: cfg.shipsen_password },\n    json: true,\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true,\n  });\n\n  if (res.statusCode < 200 || res.statusCode >= 300) {\n    throw new Error(`POST /users/login → HTTP ${res.statusCode}: ${bodyPreview(res.body)}`);\n  }\n\n  // Particularité Shipsen : le token n'est PAS un header HTTP réel — le corps JSON de la\n  // réponse contient lui-même un champ imbriqué \"headers\" qui porte le token.\n  const token = findHeader(res.body && res.body.headers, \"X-Auth-Token\");\n  if (!token) {\n    throw new Error(`POST /users/login → 200 mais pas de headers.X-Auth-Token: ${bodyPreview(res.body)}`);\n  }\n  return token;\n}\n\nconst allRows = [];\nconst errors = [];\nconst perWarehouse = [];\n\nif (!cfg.shipsen_email || !cfg.shipsen_password) {\n  errors.push({ country: \"ALL\", message: \"shipsen_email / shipsen_password manquants dans le nœud 'Config'.\" });\n} else {\n  let token = null;\n  let tokenIssuedAt = 0;\n\n  try {\n    token = await shipsenLogin.call(this);\n    tokenIssuedAt = Date.now();\n  } catch (err) {\n    errors.push({ country: \"ALL\", message: `Login initial échoué — ${err.message}` });\n  }\n\n  if (token) {\n    for (const wh of WAREHOUSES) {\n      let fetched = 0;\n      let apiTotal = null;\n\n      try {\n        let page = 1;\n        let lastPage = 1;\n\n        do {\n          if (Date.now() - tokenIssuedAt > TOKEN_MAX_AGE_MS) {\n            token = await shipsenLogin.call(this);\n            tokenIssuedAt = Date.now();\n          }\n\n          const res = await this.helpers.httpRequest({\n            method: \"GET\",\n            url: `${SHIPSEN_BASE}/expeditions/search`,\n            qs: { warehouse: wh.warehouse, limit: LIMIT, page },\n            headers: { \"X-Auth-Token\": token },\n            json: true,\n            returnFullResponse: true,\n            ignoreHttpStatusErrors: true,\n          });\n\n          if (res.statusCode < 200 || res.statusCode >= 300) {\n            throw new Error(`GET /expeditions/search (page ${page}) → HTTP ${res.statusCode}: ${bodyPreview(res.body)}`);\n          }\n\n          const content = (res.body && res.body.content) || {};\n          lastPage = content.last_page ?? 1;\n          if (apiTotal === null) apiTotal = content.total ?? null;\n\n          for (const e of content.results || []) {\n            const countryName = e.warehouse?.countryName ?? wh.country;\n\n            for (const detail of e.details || []) {\n              allRows.push({\n                detail_id: detail._id,\n                expedition_id: e._id,\n                country: countryName,\n                product_name: detail.product?.name ?? \"Inconnu\",\n                shipment_date: e.date ? String(e.date).slice(0, 10) : null,\n                arrival_date: e.arrivalDate ?? null,\n                source_country: e.country ?? null,\n                quantity_sent: detail.quantity?.sent ?? null,\n                quantity_arrived: detail.quantity?.received ?? null,\n                quantity_defected: detail.quantity?.defective ?? null,\n                status: e.status ?? null,\n              });\n              fetched += 1;\n            }\n          }\n\n          page += 1;\n        } while (page <= lastPage);\n      } catch (err) {\n        errors.push({ country: wh.country, message: err.message });\n      }\n\n      perWarehouse.push({ country: wh.country, warehouse: wh.warehouse, apiTotal, fetched });\n    }\n  }\n}\n\n// ─── Upsert en masse vers Supabase, par lots de 500 lignes ─────────────\n// Dédup par detail_id d'abord (même raison que pour shipsen_orders : la pagination peut\n// chevaucher deux pages si une expédition bouge dans le tri pendant le scan).\nconst dedupedRows = Array.from(new Map(allRows.map((r) => [r.detail_id, r])).values());\n\nlet upserted = 0;\n\nfor (let i = 0; i < dedupedRows.length; i += UPSERT_BATCH_SIZE) {\n  const batch = dedupedRows.slice(i, i + UPSERT_BATCH_SIZE);\n\n  try {\n    const res = await this.helpers.httpRequest({\n      method: \"POST\",\n      url: `${SUPABASE_URL}/rest/v1/shipsen_expeditions`,\n      headers: {\n        \"Content-Type\": \"application/json\",\n        apikey: SUPABASE_SERVICE_ROLE_KEY,\n        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,\n        Prefer: \"resolution=merge-duplicates,return=minimal\",\n      },\n      body: batch,\n      json: true,\n      returnFullResponse: true,\n      ignoreHttpStatusErrors: true,\n    });\n\n    if (res.statusCode < 200 || res.statusCode >= 300) {\n      throw new Error(`HTTP ${res.statusCode}: ${bodyPreview(res.body)}`);\n    }\n\n    upserted += batch.length;\n  } catch (err) {\n    errors.push({ country: \"SUPABASE_UPSERT\", message: `lot ${i}-${i + batch.length}: ${err.message}` });\n  }\n}\n\nreturn [\n  {\n    json: {\n      synced_items: upserted,\n      warehouses: WAREHOUSES.map((w) => w.country),\n      perWarehouse,\n      errors,\n      finished_at: new Date().toISOString(),\n    },\n  },\n];"
+      },
+      "id": "e4e4e4e4-0003-4000-8000-000000000003",
+      "name": "Sync Shipsen Expeditions → Supabase",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-160, 0],
+      "notes": "Login (POST /users/login, JWT dans body.headers.X-Auth-Token), pagine GET /expeditions/search pour les 4 warehouses, aplatit details[] (un item par produit), dédup par detail_id, upsert Supabase par lots de 500."
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Config", "type": "main", "index": 0 }]]
+    },
+    "Config": {
+      "main": [[{ "node": "Sync Shipsen Expeditions → Supabase", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

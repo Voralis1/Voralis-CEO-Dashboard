@@ -87,7 +87,7 @@ export async function fetchAfricodCongoOrdersPage(
   perPage = 100
 ) {
   const doFetch = async (token: string) =>
-    fetch(`${BASE}/orders-paginated?per_page=${perPage}&page=${page}&orders_type=leads`, {
+    fetch(`${BASE}/orders-paginated?per_page=${perPage}&page=${page}&orders_type=orders`, {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",

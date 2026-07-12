@@ -11,21 +11,24 @@ import { getCanonicalCountry, COUNTRY_FLAGS } from "@/lib/countries";
 
 // Forme normalisée, strictement identique pour les 4 prestataires (ClickMarket, Coliscod
 // Angola, Africod Congo, Shipsen) — voir components/kpi/ProviderKpiTable.tsx.
+// Depuis 2026-07 : livres/caLivre/annulees/retournees sont basés sur le statut de LIVRAISON
+// (shipping_status pour ClickMarket/Coliscod/Africod Congo, status pour Shipsen) — 'processed'
+// = livré + encaissé (frais de livraison fixe de 11$ déjà déduit de caLivre), 'cancelled' =
+// annulée, 'return' ('refunded' chez Shipsen) = retournée. confirmes/tauxConfirmation/enAttente/
+// ruptureStock (funnel de confirmation) ont été retirés de ce tableau — ils restent calculés
+// côté SQL pour les alertes de la page d'accueil (lib/dashboardData.ts) mais ne sont plus
+// affichés ici.
 export interface ProviderKpiRow {
   countryName: string;
   flag: string;
   currency: string; // devise_locale via market_settings — jamais additionnée entre pays
   totalLeads: number;
   doublons: number; // exclus du calcul des taux, affichés à part (pas des leads réels)
-  confirmes: number;
-  tauxConfirmation: number | null;
   livres: number;
-  tauxLivraison: number | null;
-  caLivre: number; // devise locale, déjà filtré livré + encaissé (voir migration date-range)
-  enAttente: number;
+  tauxLivraison: number | null; // livres / totalLeads
+  caLivre: number; // devise locale, net du frais de livraison fixe (11$/commande livrée)
   annulees: number;
-  ruptureStock: number; // perte réelle (rupture de stock) — distincte d'une annulation
-  retournees: number | null; // null = trou de source dur (réseau n'expose aucune donnée retour)
+  retournees: number; // statut réel sur les 4 réseaux depuis 2026-07 (plus de trou de source)
 }
 
 export type ProviderId = "clickmarket" | "coliscod" | "africod-congo" | "shipsen";
@@ -33,9 +36,6 @@ export type ProviderId = "clickmarket" | "coliscod" | "africod-congo" | "shipsen
 export interface ProviderConfig {
   id: ProviderId;
   label: string;
-  // false = aucune colonne retour en base, "unreliable" = colonne existe mais jamais
-  // renseignée à ce jour, true = donnée fiable et exploitable.
-  returnedDataStatus: false | "unreliable" | true;
   fetchRows: (dateFrom: string, dateTo: string) => Promise<ProviderKpiRow[]>;
 }
 
@@ -65,15 +65,11 @@ function normalizeLeadsRow(
     currency,
     totalLeads: raw.total_leads,
     doublons: raw.doublons,
-    confirmes: raw.confirmes,
-    tauxConfirmation: raw.taux_confirmation,
     livres: raw.livres,
     tauxLivraison: raw.taux_livraison,
     caLivre: raw.ca_livre,
-    enAttente: raw.en_attente,
     annulees: raw.annulees,
-    ruptureStock: raw.rupture_stock,
-    retournees: null, // trou de source : aucune colonne retour dans ce réseau
+    retournees: raw.retournees,
   };
 }
 
@@ -112,15 +108,11 @@ async function fetchShipsenRows(dateFrom: string, dateTo: string): Promise<Provi
       currency,
       totalLeads: raw.total_orders,
       doublons: raw.doublons,
-      confirmes: raw.confirmed_orders,
-      tauxConfirmation: raw.confirmation_rate,
       livres: raw.livres,
       tauxLivraison: raw.taux_livraison,
       caLivre: raw.revenue_delivered,
-      enAttente: raw.en_attente,
       annulees: raw.annulees,
-      ruptureStock: raw.rupture_stock,
-      retournees: raw.retournees, // colonne réelle (is_refunded), même si jamais renseignée
+      retournees: raw.retournees,
     };
   });
 }
@@ -129,7 +121,6 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   clickmarket: {
     id: "clickmarket",
     label: "ClickMarket",
-    returnedDataStatus: false,
     fetchRows: async (dateFrom, dateTo) => {
       const [rows, currencyMap] = await Promise.all([
         fetchClickMarketKpis(dateFrom, dateTo),
@@ -141,7 +132,6 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   coliscod: {
     id: "coliscod",
     label: "Coliscod Angola",
-    returnedDataStatus: false,
     fetchRows: async (dateFrom, dateTo) => {
       const [rows, currencyMap] = await Promise.all([
         fetchColiscodKpis(dateFrom, dateTo),
@@ -153,7 +143,6 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   "africod-congo": {
     id: "africod-congo",
     label: "Africod Congo",
-    returnedDataStatus: false,
     fetchRows: async (dateFrom, dateTo) => {
       const [rows, currencyMap] = await Promise.all([
         fetchAfricodCongoKpis(dateFrom, dateTo),
@@ -165,7 +154,6 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   shipsen: {
     id: "shipsen",
     label: "Shipsen",
-    returnedDataStatus: "unreliable",
     fetchRows: fetchShipsenRows,
   },
 };
