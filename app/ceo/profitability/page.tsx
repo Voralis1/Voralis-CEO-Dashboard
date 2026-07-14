@@ -112,7 +112,7 @@ export default function ProfitabilityPage() {
         {/* ═══ MEDIA BUYING INTERNE ═══ */}
         <Section
           title="Media Buying Interne · marge par pays"
-          titleRight={<Badge variant="blue">marge = revenu net livraison − ad spend − COGS − retours (call center inclus dans les frais de livraison)</Badge>}
+          titleRight={<Badge variant="blue">marge = revenu net livraison − ad spend − COGS (call center inclus dans les frais de livraison)</Badge>}
         >
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -189,7 +189,7 @@ export default function ProfitabilityPage() {
         {/* ═══ AFFILIÉS ═══ */}
         <Section
           title="Affiliés (CRM Voralis) · marge par réseau"
-          titleRight={<Badge variant="yellow">marge = revenu net livraison − payout − COGS − retours (call center inclus dans les frais de livraison)</Badge>}
+          titleRight={<Badge variant="yellow">marge = revenu net livraison − payout − COGS (call center inclus dans les frais de livraison)</Badge>}
         >
           {data.affiliatesError && (
             <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm mb-3">
@@ -231,7 +231,7 @@ export default function ProfitabilityPage() {
                       <GapCell missingFields={["CA livré encaissé (non exposé par le CRM)"]} />
                     </td>
                     <td className="px-3 py-3">
-                      <GapCell missingFields={["CA livré", "pays/devise", "COGS", "retours"]} />
+                      <GapCell missingFields={["CA livré", "pays/devise"]} />
                     </td>
                   </tr>
                 ))}

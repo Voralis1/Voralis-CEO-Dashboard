@@ -168,6 +168,13 @@ grant select on shipsen_kpi_global to authenticated;
 --                       "En attente de dépot", Expired.
 --   - retournees      : status = 'refunded' côté shippings (voir note ci-dessus, aucun
 --                       équivalent côté leads).
+--   - delai_1er_contact_heures (2026-07-14) : moyenne de (coalesce(last_unreached_date,
+--                       updated_at) - order_date) en heures, uniquement pour unreached_count <=
+--                       1. Pas de confirmed_at côté Shipsen leads (voir shipsen_leads_schema.sql)
+--                       — updated_at sert de repli pour unreached_count = 0, moins précis que
+--                       confirmed_at chez ClickMarket/Coliscod/Africod Congo mais seul signal
+--                       disponible.
+drop function if exists kpi_shipsen_marche_periode(date, date);
 create or replace function kpi_shipsen_marche_periode(date_from date, date_to date)
 returns table (
   country text,
@@ -185,7 +192,8 @@ returns table (
   doublons bigint,
   retournees bigint,
   livres bigint,
-  taux_livraison numeric
+  taux_livraison numeric,
+  delai_1er_contact_heures numeric
 )
 language sql
 security invoker
@@ -199,7 +207,16 @@ as $$
       count(*) filter (where status_name = 'Confirmed') as confirmed_orders,
       count(*) filter (where status_name = 'Cancelled') as cancelled_orders,
       count(*) filter (where status_name not in ('Confirmed', 'Cancelled')) as pending_orders,
-      coalesce(sum(total_price) filter (where status_name = 'Confirmed'), 0) as revenue_confirmed
+      coalesce(sum(total_price) filter (where status_name = 'Confirmed'), 0) as revenue_confirmed,
+      round(
+        avg(
+          extract(epoch from (coalesce(last_unreached_date, updated_at) - order_date)) / 3600.0
+        ) filter (
+          where unreached_count <= 1
+            and (last_unreached_date is not null or updated_at is not null)
+        ),
+        1
+      ) as delai_1er_contact_heures
     from shipsen_leads
     where order_date::date between date_from and date_to
     group by country
@@ -240,7 +257,8 @@ as $$
     0 as doublons,
     coalesce(x.retournees, 0) as retournees,
     coalesce(r.livres, 0) as livres,
-    round(100.0 * coalesce(r.livres, 0) / nullif(l.total_orders, 0), 1) as taux_livraison
+    round(100.0 * coalesce(r.livres, 0) / nullif(l.total_orders, 0), 1) as taux_livraison,
+    l.delai_1er_contact_heures
   from leads l
   full outer join shipping_extra x on x.country = l.country
   full outer join revenu_livre r on r.country = coalesce(l.country, x.country);

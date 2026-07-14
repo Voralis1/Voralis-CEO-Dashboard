@@ -1,7 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getCanonicalCountry } from "@/lib/countries";
-import { computeBaseMargin, computeL } from "@/lib/margin";
-import { resolveFraisLivraisonUnitaire, type FieldCashRecap } from "@/lib/fieldCash";
+import { computeBaseMargin, computeL, COGS_PRODUCTION_UNIT_USD, COGS_SHIPPING_UNIT_USD } from "@/lib/margin";
+import { resolveFraisLivraisonUnitaire, combineLivresCaLivre, type FieldCashRecap } from "@/lib/fieldCash";
 import { fetchFieldCashRecap as fetchFieldCashRecapServer } from "@/lib/fieldCashServer";
 import type { MarketSettings } from "@/lib/marketSettings";
 
@@ -22,13 +22,16 @@ import type { MarketSettings } from "@/lib/marketSettings";
 // routes internes en URL relative (invalides côté serveur). La LOGIQUE d'agrégation est
 // identique, seul le transport diffère.
 
+// Plafond de payout affilié (2026-07-14, décision CEO) : forfait fixe, plus calculé à partir de
+// dr_pct×(M-T) — voir computeThresholdRow.
+export const AFFILIATE_PAYOUT_MAX_USD = 9;
+
 export interface ThresholdCeoDetail {
   M_local: number | null;
   M_usd: number | null;
   T_local: number;
   T_usd: number;
   cogsPerUnitLocal: number | null;
-  retoursPerUnitLocal: number | null;
   L: number | null;
 }
 
@@ -74,7 +77,20 @@ export function computeThresholdRow(
   cplReelUsd: number | null,
   payoutReelUsd: number | null,
   periodeReel: { dateFrom: string; dateTo: string },
-  fieldCashRecap: FieldCashRecap | null = null
+  fieldCashRecap: FieldCashRecap | null = null,
+  // Angola (2026-07-14) : volume Coliscod sur la même période, pour pondérer son forfait
+  // 11$/livraison avec le coût réel Field Cash dans resolveFraisLivraisonUnitaire — cohérent
+  // avec le total combiné utilisé en Trésorerie/Rentabilité (voir combineLivresCaLivre). 0 pour
+  // les 6 pays external_11usd (paramètre ignoré dans ce cas).
+  networkLivres = 0,
+  // Taux de confirmation/livraison RÉELS observés sur les réseaux logistiques de la période
+  // (2026-07-14, demande CEO) — priment sur settings.conf_pct/dr_pct (saisie manuelle), qui ne
+  // sert plus que de repli si le marché n'a aucune commande sur la période (ex. tout juste
+  // lancé). confPctObserved = confirmes/totalLeads, drPctObserved = livres/confirmes — PAS
+  // livres/totalLeads (le "Taux livraison" affiché sur les pages réseaux), qui mélangerait déjà
+  // conf% et dr% dans une seule valeur et fausserait L = 1/(conf%×dr%).
+  confPctObserved: number | null = null,
+  drPctObserved: number | null = null
 ): ThresholdRow {
   const missingFields: string[] = [];
 
@@ -86,25 +102,29 @@ export function computeThresholdRow(
   }
 
   let cogsPerUnitLocal: number | null = null;
-  let retoursPerUnitLocal: number | null = null;
   let revenuNetLivraisonUnit: number | null = null;
 
   if (aovUsed != null) {
     // Astuce livres=1 : il faut un frais de livraison PAR UNITÉ, pas un total période — pour
     // l'Angola (internal_real_cost), c'est le coût interne moyen observé sur la période (cf.
     // lib/fieldCash.ts), faute d'un "coût de la prochaine commande" connu à l'avance.
-    const { fraisLivraisonUnitaire, chargesExternesUnitaire } = resolveFraisLivraisonUnitaire(settings, fieldCashRecap);
-    const base = computeBaseMargin(1, aovUsed, settings, fraisLivraisonUnitaire, chargesExternesUnitaire);
+    const { fraisLivraisonUnitaire, chargesExternesUnitaire } = resolveFraisLivraisonUnitaire(
+      settings,
+      fieldCashRecap,
+      networkLivres
+    );
+    // COGS (2026-07-14, demande CEO) : taux forfaitaire par unité (production + livraison
+    // fournisseur), même constantes que Trésorerie/Rentabilité — pas besoin de quantité
+    // expédiée réelle ici, "1" commande simulée = "1" unité de produit.
+    const cogsUnitaireLocal = (COGS_PRODUCTION_UNIT_USD + COGS_SHIPPING_UNIT_USD) * settings.fx_to_usd;
+    const base = computeBaseMargin(aovUsed, settings, fraisLivraisonUnitaire, chargesExternesUnitaire, cogsUnitaireLocal);
     cogsPerUnitLocal = base.cogsTotal;
-    retoursPerUnitLocal = base.coutRetoursTotal;
     revenuNetLivraisonUnit = base.revenuNetLivraison;
     missingFields.push(...base.missingFields);
   }
 
   const M_local =
-    revenuNetLivraisonUnit != null && cogsPerUnitLocal != null && retoursPerUnitLocal != null
-      ? revenuNetLivraisonUnit - cogsPerUnitLocal - retoursPerUnitLocal
-      : null;
+    revenuNetLivraisonUnit != null && cogsPerUnitLocal != null ? revenuNetLivraisonUnit - cogsPerUnitLocal : null;
 
   // Base USD choisie pour comparer les marchés entre eux et rester cohérent avec le payout
   // affilié (toujours en USD côté CRM) — voir doc du module. Reconverti en local pour affichage.
@@ -112,7 +132,12 @@ export function computeThresholdRow(
   const T_local = settings.marge_plancher_t;
   const T_usd = T_local / settings.fx_to_usd;
 
-  const L = computeL(settings.conf_pct, settings.dr_pct);
+  // Taux de confirmation/livraison RÉELS observés (2026-07-14, demande CEO) priment sur la
+  // saisie manuelle market_settings.conf_pct/dr_pct — repli uniquement si le marché n'a aucune
+  // commande sur la période (aucun L calculable sans donnée).
+  const confPctUsed = confPctObserved ?? settings.conf_pct;
+  const drPctUsed = drPctObserved ?? settings.dr_pct;
+  const L = computeL(confPctUsed, drPctUsed);
   if (L == null) {
     missingFields.push("taux de confirmation/taux de livraison (nécessaires pour calculer le plafond CPL)");
   }
@@ -121,8 +146,14 @@ export function computeThresholdRow(
   const cplBreakEvenUsd = M_usd != null && L != null ? M_usd / L : null;
   const cplMaxLocal = cplMaxUsd != null ? cplMaxUsd * settings.fx_to_usd : null;
 
-  const payoutMaxUsd = M_usd != null && settings.dr_pct != null ? (settings.dr_pct / 100) * (M_usd - T_usd) : null;
-  const payoutBreakEvenUsd = M_usd != null && settings.dr_pct != null ? (settings.dr_pct / 100) * M_usd : null;
+  // Payout affiliés (2026-07-14, demande CEO) : plafond forfaitaire de AFFILIATE_PAYOUT_MAX_USD
+  // par commande confirmée (plus calculé via dr_pct×(M-T)). Le break-even est déduit par la même
+  // proportion que cplBreakEvenUsd/cplMaxUsd (= M_usd/(M_usd-T_usd)), pour garder la même marge
+  // de sécurité relative que le plafond CPL. Nécessite M_usd > T_usd (marge positive) sinon la
+  // proportion n'a pas de sens (dénominateur nul/négatif).
+  const payoutMaxUsd = M_usd != null ? AFFILIATE_PAYOUT_MAX_USD : null;
+  const payoutBreakEvenUsd =
+    M_usd != null && M_usd - T_usd > 0 ? AFFILIATE_PAYOUT_MAX_USD * (M_usd / (M_usd - T_usd)) : null;
 
   return {
     pays: settings.pays,
@@ -132,7 +163,7 @@ export function computeThresholdRow(
     aovUsed,
     aovSource,
     periodeReel,
-    ceoDetail: { M_local, M_usd, T_local, T_usd, cogsPerUnitLocal, retoursPerUnitLocal, L },
+    ceoDetail: { M_local, M_usd, T_local, T_usd, cogsPerUnitLocal, L },
     cplMaxUsd,
     cplBreakEvenUsd,
     cplMaxLocal,
@@ -153,30 +184,43 @@ const COD_RPCS = [
   { fn: "kpi_africod_congo_marche_periode", countryField: "country_name" },
 ] as const;
 
-async function fetchCodAggregatesByCountry(dateFrom: string, dateTo: string): Promise<Map<string, { livres: number; caLivre: number }>> {
-  const aggregated = new Map<string, { livres: number; caLivre: number }>();
+interface CodAggregate {
+  livres: number;
+  caLivre: number;
+  // totalLeads/confirmes (2026-07-14) : ajoutés pour calculer le taux de confirmation/livraison
+  // RÉEL observé sur les réseaux logistiques de la période (voir computeAllThresholds ci-dessous)
+  // — remplace la saisie manuelle conf_pct/dr_pct de market_settings comme source PRIMAIRE
+  // (demande CEO : "sont normalement disponibles grâce aux pages des réseaux logistiques").
+  totalLeads: number;
+  confirmes: number;
+}
+
+async function fetchCodAggregatesByCountry(dateFrom: string, dateTo: string): Promise<Map<string, CodAggregate>> {
+  const aggregated = new Map<string, CodAggregate>();
 
   const results = await Promise.all(
     COD_RPCS.map((r) => supabaseAdmin.rpc(r.fn, { date_from: dateFrom, date_to: dateTo }))
   );
   const shipsenResult = await supabaseAdmin.rpc("kpi_shipsen_marche_periode", { date_from: dateFrom, date_to: dateTo });
 
-  function addRow(rawCountry: string, livres: number, caLivre: number) {
+  function addRow(rawCountry: string, livres: number, caLivre: number, totalLeads: number, confirmes: number) {
     const canonical = getCanonicalCountry(rawCountry);
     if (!canonical) return;
-    const entry = aggregated.get(canonical.name) ?? { livres: 0, caLivre: 0 };
+    const entry = aggregated.get(canonical.name) ?? { livres: 0, caLivre: 0, totalLeads: 0, confirmes: 0 };
     entry.livres += livres;
     entry.caLivre += caLivre;
+    entry.totalLeads += totalLeads;
+    entry.confirmes += confirmes;
     aggregated.set(canonical.name, entry);
   }
 
   for (let i = 0; i < COD_RPCS.length; i++) {
-    const rows = (results[i].data ?? []) as { country_name: string; livres: number; ca_livre: number }[];
-    for (const row of rows) addRow(row.country_name, row.livres, row.ca_livre);
+    const rows = (results[i].data ?? []) as { country_name: string; livres: number; ca_livre: number; total_leads: number; confirmes: number }[];
+    for (const row of rows) addRow(row.country_name, row.livres, row.ca_livre, row.total_leads, row.confirmes);
   }
 
-  const shipsenRows = (shipsenResult.data ?? []) as { country: string; livres: number; revenue_delivered: number }[];
-  for (const row of shipsenRows) addRow(row.country, row.livres, row.revenue_delivered);
+  const shipsenRows = (shipsenResult.data ?? []) as { country: string; livres: number; revenue_delivered: number; total_orders: number; confirmed_orders: number }[];
+  for (const row of shipsenRows) addRow(row.country, row.livres, row.revenue_delivered, row.total_orders, row.confirmed_orders);
 
   return aggregated;
 }
@@ -246,7 +290,27 @@ export async function computeAllThresholds(dateFrom: string, dateTo: string): Pr
 
   return marketSettingsList.map((settings) => {
     const cod = codAggregates.get(settings.pays);
-    const aovObserved = cod && cod.livres > 0 ? cod.caLivre / cod.livres : null;
+    const networkLivres = cod?.livres ?? 0;
+    const recap = fieldCashByPays.get(settings.pays) ?? null;
+    // Angola (2026-07-14) : AOV observé sur le total combiné Coliscod + Field Cash, cohérent avec
+    // combineLivresCaLivre() utilisé en Trésorerie/Rentabilité — sinon l'AOV ignorerait tout le
+    // volume Field Cash. Passthrough (cod seul) pour les 6 pays external_11usd.
+    const { livres: combinedLivres, caLivre: combinedCaLivre } = combineLivresCaLivre(
+      settings,
+      networkLivres,
+      cod?.caLivre ?? 0,
+      recap
+    );
+    const aovObserved = combinedLivres > 0 ? combinedCaLivre / combinedLivres : null;
+
+    // Taux de confirmation/livraison RÉELS observés sur les réseaux logistiques (2026-07-14,
+    // demande CEO) — network-only (pas combinedLivres) : Field Cash n'a pas de notion de
+    // "leads"/"confirmées", donc confPct/drPct restent basés uniquement sur le funnel COD.
+    // drPctObserved = livres/confirmes (confirmé → livré), PAS livres/totalLeads (déjà un mix
+    // conf%×dr%, affiché comme "Taux livraison" sur les pages réseaux) — sinon L = 1/(conf%×dr%)
+    // compterait le taux de confirmation deux fois.
+    const confPctObserved = cod && cod.totalLeads > 0 ? (cod.confirmes / cod.totalLeads) * 100 : null;
+    const drPctObserved = cod && cod.confirmes > 0 ? (networkLivres / cod.confirmes) * 100 : null;
 
     const ads = adMetrics.get(settings.pays);
     const cplReelUsd = ads && ads.leads > 0 ? ads.spend / ads.leads : null;
@@ -260,7 +324,10 @@ export async function computeAllThresholds(dateFrom: string, dateTo: string): Pr
       cplReelUsd,
       payoutReelUsd,
       periodeReel,
-      fieldCashByPays.get(settings.pays) ?? null
+      recap,
+      networkLivres,
+      confPctObserved,
+      drPctObserved
     );
   });
 }

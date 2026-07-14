@@ -49,9 +49,14 @@ interface DeliveryModelSettings {
 
 // Frais de livraison TOTAL pour un pays/période — unique point d'entrée pour margin.ts/
 // treasury.ts : external_11usd (6 pays) = comportement inchangé (deliveryFeeLocal × livrées) ;
-// internal_real_cost (Angola) = total réel Field Cash de la période, PAS une multiplication par
-// un taux (évite de mélanger le compteur de livraisons Coliscod avec celui de Field Cash, qui
-// peuvent diverger — ce sont deux systèmes distincts).
+// internal_real_cost (Angola) = SOMME de deux canaux distincts (2026-07-14, demande CEO) :
+// Coliscod (réseau externe présent en Angola, forfait 11$/livraison comme les 6 autres pays,
+// `livres` ici = son propre compteur, PAS combiné avec Field Cash) + Field Cash (flotte interne,
+// coût réel de sa propre livraison). Avant ce changement, seul le coût Field Cash était compté,
+// ignorant silencieusement le volume Coliscod — historiquement voulu pour ne pas mélanger deux
+// compteurs qui peuvent diverger, mais le CEO a confirmé que les deux canaux sont réels et
+// doivent s'additionner plutôt que l'un écraser l'autre. Voir aussi combineLivresCaLivre()
+// ci-dessous, à utiliser en parallèle pour combiner les REVENUS (livres/caLivre affichés).
 export function resolveFraisLivraison(
   settings: DeliveryModelSettings,
   livres: number,
@@ -61,25 +66,56 @@ export function resolveFraisLivraison(
     return { fraisLivraisonTotal: livres * deliveryFeeLocal(settings.fx_to_usd), chargesExternesTotal: null };
   }
   if (!recap) return { fraisLivraisonTotal: null, chargesExternesTotal: null };
-  return { fraisLivraisonTotal: recap.fraisLivraisonInterneTotal, chargesExternesTotal: recap.chargesExternesTotal };
+  return {
+    fraisLivraisonTotal: livres * deliveryFeeLocal(settings.fx_to_usd) + recap.fraisLivraisonInterneTotal,
+    chargesExternesTotal: recap.chargesExternesTotal,
+  };
+}
+
+// Combine les REVENUS (livres/caLivre) de deux canaux distincts pour l'Angola — Coliscod
+// (paramètre networkLivres/networkCaLivre, déjà agrégé par aggregateCodNetworksByCountry) +
+// Field Cash (recap.nbDeliveries/totalEncaisse). Pour les 6 pays external_11usd, retourne les
+// valeurs réseau inchangées (Field Cash n'existe pas pour eux). À utiliser AVANT
+// computeBaseMargin/finalizeMargin (qui doivent voir le total combiné, comme
+// resolveFraisLivraison ci-dessus) — jamais après, sous peine d'un mismatch livres/frais.
+export function combineLivresCaLivre(
+  settings: DeliveryModelSettings,
+  networkLivres: number,
+  networkCaLivre: number,
+  recap: FieldCashRecap | null
+): { livres: number; caLivre: number } {
+  if (settings.delivery_model !== "internal_real_cost") {
+    return { livres: networkLivres, caLivre: networkCaLivre };
+  }
+  return {
+    livres: networkLivres + (recap?.nbDeliveries ?? 0),
+    caLivre: networkCaLivre + (recap?.totalEncaisse ?? 0),
+  };
 }
 
 // Variante PAR UNITÉ (taux moyen observé sur la période) — uniquement pour l'astuce
 // computeBaseMargin(1, aov, ...) de lib/thresholds.ts. Pour l'Angola, faute d'un "coût de la
 // prochaine commande" connu à l'avance, on utilise la moyenne réelle observée sur la période
 // sélectionnée — même esprit que conf_pct/dr_pct de référence déjà stockés dans market_settings.
+// networkLivres (2026-07-14, défaut 0 pour les appelants qui ne l'ont pas encore) : volume
+// Coliscod sur la même période, pour une moyenne PONDÉRÉE entre son forfait 11$/livraison et le
+// coût réel Field Cash — cohérent avec resolveFraisLivraison/combineLivresCaLivre ci-dessus, qui
+// additionnent déjà les deux canaux plutôt que de ne garder que Field Cash.
 export function resolveFraisLivraisonUnitaire(
   settings: DeliveryModelSettings,
-  recap: FieldCashRecap | null
+  recap: FieldCashRecap | null,
+  networkLivres = 0
 ): { fraisLivraisonUnitaire: number | null; chargesExternesUnitaire: number | null } {
   if (settings.delivery_model !== "internal_real_cost") {
     return { fraisLivraisonUnitaire: deliveryFeeLocal(settings.fx_to_usd), chargesExternesUnitaire: null };
   }
-  if (!recap || recap.nbDeliveries === 0) {
+  const totalLivres = networkLivres + (recap?.nbDeliveries ?? 0);
+  if (!recap || totalLivres === 0) {
     return { fraisLivraisonUnitaire: null, chargesExternesUnitaire: null };
   }
+  const fraisTotal = networkLivres * deliveryFeeLocal(settings.fx_to_usd) + recap.fraisLivraisonInterneTotal;
   return {
-    fraisLivraisonUnitaire: recap.fraisLivraisonInterneTotal / recap.nbDeliveries,
-    chargesExternesUnitaire: recap.chargesExternesTotal / recap.nbDeliveries,
+    fraisLivraisonUnitaire: fraisTotal / totalLivres,
+    chargesExternesUnitaire: recap.chargesExternesTotal / totalLivres,
   };
 }

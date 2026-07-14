@@ -1,4 +1,5 @@
 import { supabase } from "./client";
+import { getCanonicalCountry } from "@/lib/countries";
 
 // Diagnostic function
 export async function diagnoseSupabaseConnection() {
@@ -153,6 +154,7 @@ export interface ClickMarketKpiRow {
   rupture_stock: number;
   doublons: number;
   retournees: number;
+  delai_1er_contact_heures: number | null;
 }
 
 export async function fetchClickMarketKpis(dateFrom: string, dateTo: string) {
@@ -183,6 +185,7 @@ export interface ColiscodKpiRow {
   rupture_stock: number;
   doublons: number;
   retournees: number;
+  delai_1er_contact_heures: number | null;
 }
 
 export async function fetchColiscodKpis(dateFrom: string, dateTo: string) {
@@ -213,6 +216,7 @@ export interface AfricodCongoKpiRow {
   rupture_stock: number;
   doublons: number;
   retournees: number;
+  delai_1er_contact_heures: number | null;
 }
 
 export async function fetchAfricodCongoKpis(dateFrom: string, dateTo: string) {
@@ -280,4 +284,29 @@ export async function fetchAfricodCongoShipments(dateFrom?: string, dateTo?: str
 
 export async function fetchShipsenExpeditions(dateFrom?: string, dateTo?: string) {
   return fetchShipmentsFromTable("shipsen_expeditions", dateFrom, dateTo);
+}
+
+// Quantité envoyée (stock entrant fournisseur→warehouse), agrégée par pays canonique et sommée
+// sur les 4 réseaux logistiques + Shipsen — source unique pour Trésorerie (COGS "Cash Out par
+// pays") ET Rentabilité/Copilot (COGS du moteur de marge, lib/margin.ts), qui doivent voir
+// exactement la même quantité pour un même pays/période (2026-07-14, COGS n'est plus saisi
+// manuellement). Placé ici (pas dans lib/treasury.ts) pour éviter un import circulaire avec
+// lib/profitability.ts, qui importe déjà des fonctions de lib/treasury.ts... — voir aussi le
+// besoin d'un équivalent server-side (supabaseAdmin) pour lib/copilot/snapshot.ts, qui ne peut
+// pas utiliser ces fetchers client (RLS/session utilisateur absente en contexte serveur pur).
+export async function fetchQuantitySentByCountry(dateFrom: string, dateTo: string): Promise<Map<string, number>> {
+  const [cm, cs, ac, se] = await Promise.all([
+    fetchClickMarketShipments(dateFrom, dateTo),
+    fetchColiscodShipments(dateFrom, dateTo),
+    fetchAfricodCongoShipments(dateFrom, dateTo),
+    fetchShipsenExpeditions(dateFrom, dateTo),
+  ]);
+
+  const byCountry = new Map<string, number>();
+  for (const row of [...cm, ...cs, ...ac, ...se]) {
+    const canonical = getCanonicalCountry(row.country);
+    if (!canonical) continue;
+    byCountry.set(canonical.name, (byCountry.get(canonical.name) ?? 0) + (row.quantity_sent ?? 0));
+  }
+  return byCountry;
 }

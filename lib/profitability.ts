@@ -1,8 +1,8 @@
 import { PROVIDERS } from "@/lib/providerKpi";
-import { fetchMetaAdsByCountry } from "@/lib/supabase/queries";
+import { fetchMetaAdsByCountry, fetchQuantitySentByCountry } from "@/lib/supabase/queries";
 import { fetchMarketSettings, type MarketSettings } from "@/lib/marketSettings";
-import { computeBaseMargin, finalizeMargin, type MarginBreakdown } from "@/lib/margin";
-import { fetchFieldCashRecap, resolveFraisLivraison, type FieldCashRecap } from "@/lib/fieldCash";
+import { computeBaseMargin, finalizeMargin, COGS_PRODUCTION_UNIT_USD, COGS_SHIPPING_UNIT_USD, type MarginBreakdown } from "@/lib/margin";
+import { fetchFieldCashRecap, resolveFraisLivraison, combineLivresCaLivre, type FieldCashRecap } from "@/lib/fieldCash";
 import { getCanonicalCountry } from "@/lib/countries";
 
 // "Media Buying Interne" = les 4 réseaux COD (ClickMarket/Coliscod/Africod Congo/Shipsen),
@@ -113,11 +113,12 @@ async function fetchAffiliateNetworks(dateFrom: string, dateTo: string): Promise
 }
 
 export async function fetchProfitabilityData(dateFrom: string, dateTo: string): Promise<ProfitabilityData> {
-  const [aggregated, marketSettingsList, metaAdsRows, affiliates] = await Promise.all([
+  const [aggregated, marketSettingsList, metaAdsRows, affiliates, quantitySentByCountry] = await Promise.all([
     aggregateCodNetworksByCountry(dateFrom, dateTo),
     fetchMarketSettings(),
     fetchMetaAdsByCountry(dateFrom, dateTo),
     fetchAffiliateNetworks(dateFrom, dateTo),
+    fetchQuantitySentByCountry(dateFrom, dateTo),
   ]);
 
   const marketSettingsByPays = new Map<string, MarketSettings>(marketSettingsList.map((s) => [s.pays, s]));
@@ -131,7 +132,7 @@ export async function fetchProfitabilityData(dateFrom: string, dateTo: string): 
   const fieldCashByPays = new Map<string, FieldCashRecap>(internalCostCountries.map((s, i) => [s.pays, fieldCashRecaps[i]]));
 
   const mediaBuying: MediaBuyingCountryRow[] = [];
-  for (const [countryName, { livres, caLivre }] of aggregated) {
+  for (const [countryName, { livres: networkLivres, caLivre: networkCaLivre }] of aggregated) {
     const settings = marketSettingsByPays.get(countryName);
     if (!settings) continue; // pas de market_settings pour ce pays — ne devrait pas arriver (7 pays couverts)
 
@@ -139,12 +140,16 @@ export async function fetchProfitabilityData(dateFrom: string, dateTo: string): 
     const adSpendKnown = adSpendByCanonicalCountry.has(countryName);
     const adSpendLocal = adSpendUsd * settings.fx_to_usd;
 
-    const { fraisLivraisonTotal, chargesExternesTotal } = resolveFraisLivraison(
-      settings,
-      livres,
-      fieldCashByPays.get(countryName) ?? null
-    );
-    const base = computeBaseMargin(livres, caLivre, settings, fraisLivraisonTotal, chargesExternesTotal);
+    const recap = fieldCashByPays.get(countryName) ?? null;
+    const { fraisLivraisonTotal, chargesExternesTotal } = resolveFraisLivraison(settings, networkLivres, recap);
+    // Angola (2026-07-14) : Coliscod + Field Cash sont deux canaux distincts, additionnés pour
+    // le vrai total (demande CEO) — voir combineLivresCaLivre(). Passthrough pour les 6 autres pays.
+    const { livres, caLivre } = combineLivresCaLivre(settings, networkLivres, networkCaLivre, recap);
+    // COGS (2026-07-14, demande CEO) : ne se saisit plus manuellement — même formule que "Cash
+    // Out par pays" en Trésorerie, quantité physiquement expédiée × 15$/unité.
+    const quantitySent = quantitySentByCountry.get(countryName) ?? 0;
+    const cogsTotal = (COGS_PRODUCTION_UNIT_USD + COGS_SHIPPING_UNIT_USD) * quantitySent * settings.fx_to_usd;
+    const base = computeBaseMargin(caLivre, settings, fraisLivraisonTotal, chargesExternesTotal, cogsTotal);
     const margin = finalizeMargin(base, livres, adSpendLocal, "ad spend");
 
     mediaBuying.push({

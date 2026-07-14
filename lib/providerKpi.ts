@@ -33,6 +33,11 @@ export interface ProviderKpiRow {
   tauxLivraison: number | null; // livres / total_leads (dénominateur SQL, pas confirmes)
   caLivre: number; // devise locale, net du frais de livraison fixe (11$/commande livrée)
   annulees: number;
+  // Délai 1er contact (2026-07-14) : moyenne en heures entre création de la commande et 1er
+  // contact call center. Approximation — fiable seulement pour les commandes réglées en 0 ou 1
+  // tentative d'appel ratée (voir lib/supabase/queries.ts / supabase/*_schema.sql pour le détail
+  // du calcul et son biais documenté). `null` si aucune commande éligible sur la période.
+  delaiPremierContactHeures: number | null;
 }
 
 export type ProviderId = "clickmarket" | "coliscod" | "africod-congo" | "shipsen";
@@ -74,6 +79,7 @@ function normalizeLeadsRow(
     tauxLivraison: raw.taux_livraison,
     caLivre: raw.ca_livre,
     annulees: raw.annulees,
+    delaiPremierContactHeures: raw.delai_1er_contact_heures,
   };
 }
 
@@ -94,6 +100,7 @@ interface ShipsenRawRow {
   retournees: number;
   livres: number;
   taux_livraison: number | null;
+  delai_1er_contact_heures: number | null;
 }
 
 async function fetchShipsenRows(dateFrom: string, dateTo: string): Promise<ProviderKpiRow[]> {
@@ -117,6 +124,7 @@ async function fetchShipsenRows(dateFrom: string, dateTo: string): Promise<Provi
       tauxLivraison: raw.taux_livraison,
       caLivre: raw.revenue_delivered,
       annulees: raw.annulees,
+      delaiPremierContactHeures: raw.delai_1er_contact_heures,
     };
   });
 }

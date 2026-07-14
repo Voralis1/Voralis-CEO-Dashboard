@@ -16,12 +16,14 @@ import { AlertTriangle, Loader2, Save, Lock } from "lucide-react";
 // Champs pouvant être NULL ("pas encore saisi" — jamais confondu avec 0, cf. lib/margin.ts).
 type NullableField = Exclude<keyof MarketSettingsUpdate, "cogs_devise" | "fx_to_usd" | "marge_plancher_t">;
 
+// cogs_produit/taux_retour/frais_retour_local (2026-07-14) : retirés de ce formulaire — le COGS
+// ne se saisit plus manuellement (vient de la quantité expédiée × 15$/unité, cf. lib/margin.ts,
+// même formule que "Cash Out" en Trésorerie) et les retours ont été retirés de la formule de
+// marge (demande CEO). Les colonnes DB existent toujours (non supprimées) mais ne sont plus
+// éditables ici, faute d'être encore lues par aucun calcul.
 const NULLABLE_COLUMNS: { field: NullableField; label: string; step?: string }[] = [
-  { field: "cogs_produit", label: "COGS produit", step: "0.01" },
-  { field: "taux_retour", label: "Taux de retour %", step: "0.01" },
   { field: "conf_pct", label: "Taux confirmation %", step: "0.01" },
   { field: "dr_pct", label: "Taux livraison %", step: "0.01" },
-  { field: "frais_retour_local", label: "Frais de retour (local)", step: "0.01" },
   { field: "aov_override", label: "AOV simulé (Seuils, optionnel)", step: "0.01" },
 ];
 
@@ -77,10 +79,6 @@ export default function MarketSettingsPage() {
   function margePlancherDraftValue(row: MarketSettings): number {
     const draft = drafts[row.pays]?.marge_plancher_t;
     return draft !== undefined ? Number(draft) : row.marge_plancher_t;
-  }
-
-  function draftCogsDevise(row: MarketSettings): "USD" | "local" {
-    return drafts[row.pays]?.cogs_devise ?? row.cogs_devise;
   }
 
   function setDraft(pays: string, field: keyof MarketSettingsUpdate, value: number | string | null) {
@@ -157,7 +155,6 @@ export default function MarketSettingsPage() {
                         {col.label}
                       </th>
                     ))}
-                    <th className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">Devise COGS</th>
                     <th className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">
                       Marge plancher T (confidentiel)
                     </th>
@@ -208,16 +205,6 @@ export default function MarketSettingsPage() {
                             </td>
                           );
                         })}
-                        <td className="px-3 py-3">
-                          <select
-                            value={draftCogsDevise(row)}
-                            onChange={(e) => setDraft(row.pays, "cogs_devise", e.target.value)}
-                            className="px-2 py-1.5 text-xs bg-white text-slate-900 border border-slate-300 rounded-md focus:outline-none focus:border-emerald-500 transition-colors"
-                          >
-                            <option value="USD">USD</option>
-                            <option value="local">local</option>
-                          </select>
-                        </td>
                         <td className="px-3 py-3">
                           <input
                             type="number"

@@ -119,7 +119,7 @@ export default function ThresholdsPage() {
           </div>
         )}
 
-        <Section title="Media Buying Interne · CPL max par marché">
+        <Section title="Réseaux logistiques · CPL max par marché">
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>

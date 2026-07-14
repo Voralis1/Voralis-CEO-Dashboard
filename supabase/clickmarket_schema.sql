@@ -25,8 +25,17 @@ create table if not exists clickmarket_leads (
   order_created_at timestamptz,             -- order.created_at (ClickMarket side)
   confirmed_at timestamptz,
   delivered_at timestamptz,
+  -- Délai 1er contact (2026-07-14) : ClickMarket ne garde qu'un COMPTEUR de tentatives ratées
+  -- (no_answer_count) + la date de la DERNIÈRE tentative ratée (last_unreached_date), pas un
+  -- historique par tentative. Voir kpi_clickmarket_marche_periode pour le calcul et son biais
+  -- documenté (fiable seulement pour no_answer_count <= 1).
+  no_answer_count integer,
+  last_unreached_date timestamptz,
   synced_at timestamptz not null default now()
 );
+
+alter table clickmarket_leads add column if not exists no_answer_count integer;
+alter table clickmarket_leads add column if not exists last_unreached_date timestamptz;
 
 create index if not exists clickmarket_leads_country_idx on clickmarket_leads (country_id);
 create index if not exists clickmarket_leads_order_date_idx on clickmarket_leads (order_date);
@@ -128,6 +137,15 @@ group by country_id;
 --                       fenêtre, 183 vs 195 sur une autre — created_at systématiquement plus
 --                       proche/exact). taux_confirmation et taux_livraison utilisent maintenant
 --                       ce total_leads (created_at) comme dénominateur.
+--   - delai_1er_contact_heures (2026-07-14) : approximation demandée par le CEO. Formule =
+--                       moyenne de (coalesce(last_unreached_date, confirmed_at) - order_created_at)
+--                       en heures, UNIQUEMENT sur les commandes où no_answer_count <= 1 (0 = 1er
+--                       appel réussi directement, confirmed_at fait foi ; 1 = un seul appel raté,
+--                       last_unreached_date EST alors la date du 1er contact puisque c'est le
+--                       seul). Au-delà (no_answer_count >= 2), ClickMarket ne garde que la date
+--                       de la DERNIÈRE tentative ratée, pas la première — impossible de calculer
+--                       un délai fiable, ces commandes sont donc exclues de la moyenne plutôt que
+--                       d'introduire un biais silencieux.
 --   - Décalage horaire WAT (2026-07-14) : Gabon/Congo/Angola sont en WAT (UTC+1). Nos colonnes
 --                       timestamptz sont stockées en UTC ; caster directement `col::date` lit
 --                       donc "aujourd'hui" avec 1h de retard par rapport à l'heure locale (une
@@ -153,7 +171,8 @@ returns table (
   annulees bigint,
   rupture_stock bigint,
   doublons bigint,
-  retournees bigint
+  retournees bigint,
+  delai_1er_contact_heures numeric
 )
 language sql
 security invoker
@@ -163,7 +182,16 @@ as $$
     select
       country_id,
       max(country_name) as country_name,
-      count(*) as total_leads
+      count(*) as total_leads,
+      round(
+        avg(
+          extract(epoch from (coalesce(last_unreached_date, confirmed_at) - order_created_at)) / 3600.0
+        ) filter (
+          where no_answer_count <= 1
+            and (last_unreached_date is not null or confirmed_at is not null)
+        ),
+        1
+      ) as delai_1er_contact_heures
     from clickmarket_leads
     where order_created_at is not null
       and (order_created_at + interval '1 hour')::date between date_from and date_to
@@ -223,7 +251,8 @@ as $$
     coalesce(f.annulees, 0) as annulees,
     coalesce(f.rupture_stock, 0) as rupture_stock,
     coalesce(f.doublons, 0) as doublons,
-    coalesce(f.retournees, 0) as retournees
+    coalesce(f.retournees, 0) as retournees,
+    t.delai_1er_contact_heures
   from total t
   full outer join funnel f on f.country_id = t.country_id
   full outer join confirmation c on c.country_id = coalesce(t.country_id, f.country_id)

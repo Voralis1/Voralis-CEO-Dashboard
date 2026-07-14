@@ -4,11 +4,17 @@
 // (market_settings), jamais recodé ailleurs.
 export const DELIVERY_FEE_USD = 11;
 
-// cogs_produit, taux_retour, conf_pct, dr_pct sont NULLABLE :
-// NULL = pas encore saisi par le CEO (→ tout calcul de marge qui en dépend doit s'afficher
-// "incomplet", jamais silencieusement traité comme 0). 0 = coût confirmé réellement nul.
-// Ne jamais faire `valeur ?? 0` sur ces champs dans un calcul de marge — utiliser les helpers
-// de lib/margin.ts qui propagent explicitement l'incomplétude.
+// conf_pct/dr_pct sont NULLABLE : NULL = pas encore saisi par le CEO ET aucune donnée observée
+// disponible (→ tout calcul de marge qui en dépend doit s'afficher "incomplet", jamais
+// silencieusement traité comme 0). Depuis 2026-07-14, ces deux champs ne servent plus que de
+// repli : lib/thresholds.ts calcule d'abord le taux de confirmation/livraison RÉEL observé sur
+// les réseaux logistiques de la période, et ne retombe sur ces valeurs saisies que si aucune
+// commande n'a été enregistrée sur la période (marché tout juste lancé, par ex.).
+//
+// cogs_produit/cogs_devise/taux_retour/frais_retour_local (2026-07-14, demande CEO) : colonnes
+// SUPPRIMÉES de market_settings (voir market_settings_drop_manual_costs_migration.sql). Le COGS
+// vient désormais de lib/margin.ts (quantité expédiée × 15$/unité, même formule que "Cash Out"
+// en Trésorerie) ; les retours ont été retirés de la formule de marge.
 //
 // cout_call_center_par_commande n'est plus lu par le moteur de marge (2026-07-06) : confirmé
 // par le CEO comme déjà inclus dans les 11 USD/commande de frais de livraison fixe. La colonne
@@ -30,14 +36,8 @@ export interface MarketSettings {
   fx_updated_at: string;
   fx_updated_by: string | null;
   delivery_model: DeliveryModel;
-  cogs_produit: number | null;
-  cogs_devise: "USD" | "local";
-  taux_retour: number | null;
   conf_pct: number | null;
   dr_pct: number | null;
-  // Frais de retour par réseau, en devise locale — dépendance différée assumée : traité comme
-  // 0 tant que non renseigné (contrairement aux champs ci-dessus qui doivent rester "incomplets").
-  frais_retour_local: number | null;
   marge_plancher_t: number;
   // Surcharge CEO pour SIMULER un AOV différent dans le module Seuils ("et si l'AOV était de
   // X ?"). NULL (cas normal) = on utilise l'AOV réellement observé (CA livré encaissé ÷
@@ -65,12 +65,8 @@ export type MarketSettingsUpdate = Partial<
   Pick<
     MarketSettings,
     | "fx_to_usd"
-    | "cogs_produit"
-    | "cogs_devise"
-    | "taux_retour"
     | "conf_pct"
     | "dr_pct"
-    | "frais_retour_local"
     | "marge_plancher_t"
     | "aov_override"
   >

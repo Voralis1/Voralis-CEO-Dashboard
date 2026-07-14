@@ -98,7 +98,7 @@ export default function ProviderKpiTable({ provider, countryFilter }: ProviderKp
                   "AOV encaissé",
                   "CA livré encaissé",
                   "Annulées",
-                  "Délai 1er contact",
+                  "Délai moyen 1er contact",
                 ].map((h) => (
                   <th key={h} className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">
                     {h}
@@ -141,8 +141,15 @@ export default function ProviderKpiTable({ provider, countryFilter }: ProviderKp
                       {r.annulees.toLocaleString("fr-FR")}
                       <GapNote text="Motifs d'annulation non disponibles — aucune colonne reason code exposée par ce réseau." />
                     </td>
-                    <td className="px-3 py-3">
-                      <GapBadge text="Timestamp du 1er appel call center absent sur les 4 réseaux — aucune colonne ne distingue la date de réception de la date du 1er contact (confirmed_at marque la fin de la confirmation, pas la première tentative)." />
+                    <td className="px-3 py-3 text-slate-700">
+                      {r.delaiPremierContactHeures != null ? (
+                        <>
+                          {formatDelai(r.delaiPremierContactHeures)}
+                          <GapNote text="Approximation : moyenne uniquement sur les commandes réglées en 0 ou 1 tentative d'appel ratée (les réseaux ne gardent pas d'historique complet des tentatives, seulement un compteur + la date de la dernière) — les commandes avec 2+ tentatives ratées sont exclues du calcul." />
+                        </>
+                      ) : (
+                        <GapBadge text="Aucune commande éligible sur cette période pour ce pays (approximation limitée aux commandes réglées en 0 ou 1 tentative d'appel ratée — voir lib/providerKpi.ts)." />
+                      )}
                     </td>
                   </tr>
                 );
@@ -173,6 +180,15 @@ export default function ProviderKpiTable({ provider, countryFilter }: ProviderKp
       </div>
     </>
   );
+}
+
+// Formate un délai en heures (potentiellement fractionnaire) en "Xj Yh" ou "Xh" — lisible côté CEO,
+// la valeur brute (numeric, en heures) vient directement de kpi_<réseau>_marche_periode.
+function formatDelai(heures: number): string {
+  if (heures < 24) return `${Math.round(heures * 10) / 10}h`;
+  const jours = Math.floor(heures / 24);
+  const reste = Math.round(heures % 24);
+  return reste > 0 ? `${jours}j ${reste}h` : `${jours}j`;
 }
 
 function GapBadge({ text }: { text: string }) {

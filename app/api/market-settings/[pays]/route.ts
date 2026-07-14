@@ -7,12 +7,8 @@ import type { MarketSettingsUpdate } from "@/lib/marketSettings";
 // pour ne jamais reproduire un bug de devise incorrecte assignée à un pays.
 const EDITABLE_FIELDS = [
   "fx_to_usd",
-  "cogs_produit",
-  "cogs_devise",
-  "taux_retour",
   "conf_pct",
   "dr_pct",
-  "frais_retour_local",
   "marge_plancher_t",
   "aov_override",
 ] as const;

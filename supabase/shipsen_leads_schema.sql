@@ -40,8 +40,18 @@ create table if not exists shipsen_leads (
   order_date timestamptz not null,          -- order.date (pas createdAt — voir note ci-dessus)
   created_at timestamptz,
   updated_at timestamptz,
+  -- Délai 1er contact (2026-07-14) : équivalent Shipsen de no_answer_count/last_unreached_date
+  -- (ClickMarket/Coliscod/Africod Congo) — order.unreachedBySize (compteur) et
+  -- order.lastUnreachedDate (date de la DERNIÈRE tentative ratée, pas la première). Pas de
+  -- confirmed_at côté Shipsen leads : order.updatedAt sert de repli pour le cas
+  -- unreached_count = 0 (résolution au 1er appel), moins précis mais seul signal disponible.
+  unreached_count integer,
+  last_unreached_date timestamptz,
   synced_at timestamptz not null default now()
 );
+
+alter table shipsen_leads add column if not exists unreached_count integer;
+alter table shipsen_leads add column if not exists last_unreached_date timestamptz;
 
 create index if not exists shipsen_leads_warehouse_idx on shipsen_leads (warehouse_id);
 create index if not exists shipsen_leads_country_idx on shipsen_leads (country);

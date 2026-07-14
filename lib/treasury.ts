@@ -1,22 +1,9 @@
 import { aggregateCodNetworksByCountry, aggregateAdSpendByCountry } from "@/lib/profitability";
-import {
-  fetchMetaAdsByCountry,
-  fetchClickMarketShipments,
-  fetchColiscodShipments,
-  fetchAfricodCongoShipments,
-  fetchShipsenExpeditions,
-} from "@/lib/supabase/queries";
+import { fetchMetaAdsByCountry, fetchQuantitySentByCountry } from "@/lib/supabase/queries";
 import { fetchPublicMarketSettings, type PublicMarketSettings } from "@/lib/marketSettings";
-import { fetchFieldCashRecap, resolveFraisLivraison, type FieldCashRecap } from "@/lib/fieldCash";
+import { fetchFieldCashRecap, resolveFraisLivraison, combineLivresCaLivre, type FieldCashRecap } from "@/lib/fieldCash";
 import { getCanonicalCountry } from "@/lib/countries";
-
-// COGS Trésorerie (2026-07) — distinct de market_settings.cogs_produit (coût par COMMANDE
-// livrée, utilisé par /profitability) : ici c'est un coût par UNITÉ DE PRODUIT expédiée,
-// (coût de production + frais de livraison fournisseur→warehouse) × quantité envoyée sur la
-// période, tous produits confondus par pays. Constantes CEO, USD, converties en devise locale
-// comme le reste (fx_to_usd).
-const COGS_PRODUCTION_UNIT_USD = 7;
-const COGS_SHIPPING_UNIT_USD = 8;
+import { COGS_PRODUCTION_UNIT_USD, COGS_SHIPPING_UNIT_USD } from "@/lib/margin";
 
 // Cash encaissé par pays — base "livré + encaissé" (Prompt 1bis : le filtre date de dateFrom/
 // dateTo est déjà appliqué sur la date de LIVRAISON via lib/providerKpi.ts, pas la création).
@@ -83,28 +70,6 @@ async function fetchAffiliatePayoutUsdByCountry(dateFrom: string, dateTo: string
   }
 }
 
-// Quantité envoyée (Qté envoyée, stock entrant fournisseur→warehouse), agrégée par pays
-// canonique et sommée sur les 4 réseaux logistiques + Shipsen — même tables que la page Stock &
-// Inventaire (lib/supabase/queries.ts), filtrées sur la même période que le reste de la
-// Trésorerie. "Envoyée" (pas "arrivée") : le coût de production/livraison fournisseur est déjà
-// engagé dès l'expédition, qu'elle arrive intacte ou non (décision CEO, 2026-07).
-async function fetchQuantitySentByCountry(dateFrom: string, dateTo: string): Promise<Map<string, number>> {
-  const [cm, cs, ac, se] = await Promise.all([
-    fetchClickMarketShipments(dateFrom, dateTo),
-    fetchColiscodShipments(dateFrom, dateTo),
-    fetchAfricodCongoShipments(dateFrom, dateTo),
-    fetchShipsenExpeditions(dateFrom, dateTo),
-  ]);
-
-  const byCountry = new Map<string, number>();
-  for (const row of [...cm, ...cs, ...ac, ...se]) {
-    const canonical = getCanonicalCountry(row.country);
-    if (!canonical) continue;
-    byCountry.set(canonical.name, (byCountry.get(canonical.name) ?? 0) + (row.quantity_sent ?? 0));
-  }
-  return byCountry;
-}
-
 export async function fetchTreasuryCashData(dateFrom: string, dateTo: string): Promise<TreasuryCashData> {
   const [aggregated, marketSettingsList, metaAdsRows, affiliatePayout, quantitySentByCountry] = await Promise.all([
     aggregateCodNetworksByCountry(dateFrom, dateTo),
@@ -124,12 +89,16 @@ export async function fetchTreasuryCashData(dateFrom: string, dateTo: string): P
   const fieldCashByPays = new Map<string, FieldCashRecap>(internalCostCountries.map((s, i) => [s.pays, fieldCashRecaps[i]]));
 
   const cashByCountry: CashEncaisseRow[] = [];
-  for (const [countryName, { livres, caLivre }] of aggregated) {
+  for (const [countryName, { livres: networkLivres, caLivre: networkCaLivre }] of aggregated) {
     const settings = marketSettingsByPays.get(countryName);
     if (!settings) continue;
 
-    const { fraisLivraisonTotal } = resolveFraisLivraison(settings, livres, fieldCashByPays.get(countryName) ?? null);
+    const recap = fieldCashByPays.get(countryName) ?? null;
+    const { fraisLivraisonTotal } = resolveFraisLivraison(settings, networkLivres, recap);
     if (fraisLivraisonTotal == null) continue; // configuration Field Cash Angola incomplète — pas de cash encaissé fiable à afficher
+    // Angola (2026-07-14) : Coliscod + Field Cash sont deux canaux distincts, additionnés pour
+    // le vrai total — voir combineLivresCaLivre(). Passthrough pour les 6 autres pays.
+    const { livres, caLivre } = combineLivresCaLivre(settings, networkLivres, networkCaLivre, recap);
     cashByCountry.push({
       countryName,
       currency: settings.devise_locale,

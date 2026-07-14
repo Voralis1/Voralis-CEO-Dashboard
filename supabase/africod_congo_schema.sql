@@ -24,8 +24,15 @@ create table if not exists africod_congo_leads (
   order_created_at timestamptz,             -- order.created_at (AfricaCOD side)
   confirmed_at timestamptz,
   delivered_at timestamptz,
+  -- Délai 1er contact (2026-07-14) : voir kpi_africod_congo_marche_periode pour le calcul et son
+  -- biais documenté (fiable seulement pour no_answer_count <= 1 — même limite que ClickMarket).
+  no_answer_count integer,
+  last_unreached_date timestamptz,
   synced_at timestamptz not null default now()
 );
+
+alter table africod_congo_leads add column if not exists no_answer_count integer;
+alter table africod_congo_leads add column if not exists last_unreached_date timestamptz;
 
 create index if not exists africod_congo_leads_country_idx on africod_congo_leads (country_id);
 create index if not exists africod_congo_leads_order_date_idx on africod_congo_leads (order_date);
@@ -93,6 +100,10 @@ group by country_id;
 --                       = annulée, 'return' = retournée. ca_livre déduit 11$ de frais de
 --                       livraison fixe par commande livrée. taux_livraison passe de
 --                       livres/confirmes à livres/total_leads.
+--   - delai_1er_contact_heures (2026-07-14) : moyenne de (coalesce(last_unreached_date,
+--                       confirmed_at) - order_created_at) en heures, uniquement pour
+--                       no_answer_count <= 1 (même limite/logique que ClickMarket — voir son
+--                       schéma pour le détail complet).
 --   - Décalage horaire WAT (2026-07-14) : le Congo-Brazzaville est en WAT (UTC+1). Nos colonnes
 --                       timestamptz sont stockées en UTC ; caster directement `col::date` lit
 --                       donc "aujourd'hui" avec 1h de retard par rapport à l'heure locale.
@@ -115,7 +126,8 @@ returns table (
   annulees bigint,
   rupture_stock bigint,
   doublons bigint,
-  retournees bigint
+  retournees bigint,
+  delai_1er_contact_heures numeric
 )
 language sql
 security invoker
@@ -125,7 +137,16 @@ as $$
     select
       country_id,
       max(country_name) as country_name,
-      count(*) as total_leads
+      count(*) as total_leads,
+      round(
+        avg(
+          extract(epoch from (coalesce(last_unreached_date, confirmed_at) - order_created_at)) / 3600.0
+        ) filter (
+          where no_answer_count <= 1
+            and (last_unreached_date is not null or confirmed_at is not null)
+        ),
+        1
+      ) as delai_1er_contact_heures
     from africod_congo_leads
     where order_created_at is not null
       and (order_created_at + interval '1 hour')::date between date_from and date_to
@@ -183,7 +204,8 @@ as $$
     coalesce(f.annulees, 0) as annulees,
     0 as rupture_stock,
     coalesce(f.doublons, 0) as doublons,
-    coalesce(f.retournees, 0) as retournees
+    coalesce(f.retournees, 0) as retournees,
+    t.delai_1er_contact_heures
   from total t
   full outer join funnel f on f.country_id = t.country_id
   full outer join confirmation c on c.country_id = coalesce(t.country_id, f.country_id)

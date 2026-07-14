@@ -1,7 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getCanonicalCountry } from "@/lib/countries";
-import { computeBaseMargin, finalizeMargin, type MarginBreakdown } from "@/lib/margin";
-import { resolveFraisLivraison, type FieldCashRecap } from "@/lib/fieldCash";
+import { computeBaseMargin, finalizeMargin, COGS_PRODUCTION_UNIT_USD, COGS_SHIPPING_UNIT_USD, type MarginBreakdown } from "@/lib/margin";
+import { resolveFraisLivraison, combineLivresCaLivre, type FieldCashRecap } from "@/lib/fieldCash";
 import { fetchFieldCashRecap as fetchFieldCashRecapServer } from "@/lib/fieldCashServer";
 import type { MarketSettings } from "@/lib/marketSettings";
 import { computeAllThresholds, stripCeoDetail, type ThresholdRow } from "@/lib/thresholds";
@@ -243,6 +243,29 @@ async function fetchAffiliateData(
   }
 }
 
+// Quantité envoyée par pays (2026-07-14, COGS du moteur de marge) — équivalent SERVEUR de
+// fetchQuantitySentByCountry (lib/supabase/queries.ts, client uniquement) : même 4 tables, mêmes
+// colonnes, mais via supabaseAdmin puisque ce module ne peut pas utiliser le client navigateur
+// (pas de session utilisateur en contexte serveur pur — voir commentaire en tête de fichier).
+async function fetchQuantitySentByCountryServer(dateFrom: string, dateTo: string): Promise<Map<string, number>> {
+  const tables = ["clickmarket_shipments", "coliscod_shipments", "africod_congo_shipments", "shipsen_expeditions"];
+  const results = await Promise.all(
+    tables.map((table) =>
+      supabaseAdmin.from(table).select("country, quantity_sent").gte("shipment_date", dateFrom).lte("shipment_date", dateTo)
+    )
+  );
+
+  const byCountry = new Map<string, number>();
+  for (const res of results) {
+    for (const row of (res.data ?? []) as { country: string; quantity_sent: number | null }[]) {
+      const canonical = getCanonicalCountry(row.country);
+      if (!canonical) continue;
+      byCountry.set(canonical.name, (byCountry.get(canonical.name) ?? 0) + (row.quantity_sent ?? 0));
+    }
+  }
+  return byCountry;
+}
+
 export interface StockProductRow {
   produit: string;
   quantiteStock: number;
@@ -413,11 +436,12 @@ export interface CopilotSnapshot {
 export async function buildCopilotSnapshot(dateFrom: string, dateTo: string, role: UserRole): Promise<CopilotSnapshot> {
   const nbJours = daysBetweenInclusive(dateFrom, dateTo);
 
-  const [marketSettingsRes, adSpend, affiliateData, thresholds] = await Promise.all([
+  const [marketSettingsRes, adSpend, affiliateData, thresholds, quantitySentByCountry] = await Promise.all([
     supabaseAdmin.from("market_settings").select("*").order("pays"),
     fetchAdSpendUsdByCountry(dateFrom, dateTo),
     fetchAffiliateData(dateFrom, dateTo),
     computeAllThresholds(dateFrom, dateTo),
+    fetchQuantitySentByCountryServer(dateFrom, dateTo),
   ]);
 
   const marketSettingsList = (marketSettingsRes.data ?? []) as MarketSettings[];
@@ -466,8 +490,8 @@ export async function buildCopilotSnapshot(dateFrom: string, dateTo: string, rol
   const markets: MarketSnapshot[] = [];
   for (const settings of marketSettingsList) {
     const rowsForCountry = funnelRows.filter((r) => r.pays === settings.pays);
-    const livres = rowsForCountry.reduce((s, r) => s + r.livres, 0);
-    const caLivre = rowsForCountry.reduce((s, r) => s + r.caLivre, 0);
+    const networkLivres = rowsForCountry.reduce((s, r) => s + r.livres, 0);
+    const networkCaLivre = rowsForCountry.reduce((s, r) => s + r.caLivre, 0);
     const totalLeads = rowsForCountry.reduce((s, r) => s + r.totalLeads, 0);
     const confirmes = rowsForCountry.reduce((s, r) => s + r.confirmes, 0);
 
@@ -475,12 +499,16 @@ export async function buildCopilotSnapshot(dateFrom: string, dateTo: string, rol
     const adSpendKnown = adSpend.known.has(settings.pays);
     const adSpendLocal = adSpendUsd * settings.fx_to_usd;
 
-    const { fraisLivraisonTotal, chargesExternesTotal } = resolveFraisLivraison(
-      settings,
-      livres,
-      fieldCashByPays.get(settings.pays) ?? null
-    );
-    const base = computeBaseMargin(livres, caLivre, settings, fraisLivraisonTotal, chargesExternesTotal);
+    const recap = fieldCashByPays.get(settings.pays) ?? null;
+    const { fraisLivraisonTotal, chargesExternesTotal } = resolveFraisLivraison(settings, networkLivres, recap);
+    // Angola (2026-07-14) : Coliscod + Field Cash sont deux canaux distincts, additionnés pour
+    // le vrai total (demande CEO) — voir combineLivresCaLivre().
+    const { livres, caLivre } = combineLivresCaLivre(settings, networkLivres, networkCaLivre, recap);
+    // COGS (2026-07-14, demande CEO) : ne se saisit plus manuellement — même formule que "Cash
+    // Out par pays" en Trésorerie, quantité physiquement expédiée × 15$/unité.
+    const quantitySent = quantitySentByCountry.get(settings.pays) ?? 0;
+    const cogsTotal = (COGS_PRODUCTION_UNIT_USD + COGS_SHIPPING_UNIT_USD) * quantitySent * settings.fx_to_usd;
+    const base = computeBaseMargin(caLivre, settings, fraisLivraisonTotal, chargesExternesTotal, cogsTotal);
     const margin = finalizeMargin(base, livres, adSpendLocal, "ad spend (Media Buying Interne)");
 
     const thresholdRow = thresholdByCountry.get(settings.pays);

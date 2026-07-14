@@ -100,9 +100,9 @@ export function computeBottleneckAnalysis(snapshot: CopilotSnapshot): Bottleneck
       insights.push({
         priorite: 0,
         ou: { pays: market.pays, etape: "marge" },
-        quoi: `Configurer les paramètres de coût de ${market.pays} (COGS, taux de retour dans Paramètres marché) — sans cela, impossible de savoir si ce marché contribue à l'objectif des 50 livraisons rentables/jour.`,
+        quoi: `Vérifier la configuration Field Cash de ${market.pays} (frais de livraison réels manquants) — sans cela, impossible de savoir si ce marché contribue à l'objectif des 50 livraisons rentables/jour.`,
         impact: { estimation: null, unite: "livraisons/jour non classables" },
-        angleMort: "Marge non calculable : au moins un paramètre de coût (COGS, taux de retour) n'est pas encore saisi pour ce marché.",
+        angleMort: "Marge non calculable : le frais de livraison réel (configuration Field Cash) n'est pas encore disponible pour ce marché.",
       });
     }
   }
