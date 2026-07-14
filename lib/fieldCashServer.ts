@@ -67,7 +67,14 @@ export async function fetchFieldCashRecap(country: string, dateFrom: string, dat
 
   const params = paramsRes.data as { currency: string } | null;
 
-  const cashDetenuRestant = totalEncaisse - fraisLivraisonInterneTotal - chargesExternesTotal - remisTotal;
+  // Commission agent (2026-07-14, demande CEO) : forfait de 2000 (devise locale) par livraison,
+  // extraite du montant restant — l'agent garde cette part, elle ne fait plus partie du cash
+  // encore détenu "pour l'entreprise".
+  const COMMISSION_AGENT_PAR_LIVRAISON = 2000;
+  const commissionAgentTotal = nbDeliveries * COMMISSION_AGENT_PAR_LIVRAISON;
+
+  const cashDetenuRestant =
+    totalEncaisse - fraisLivraisonInterneTotal - chargesExternesTotal - remisTotal - commissionAgentTotal;
 
   return {
     country,
@@ -76,6 +83,7 @@ export async function fetchFieldCashRecap(country: string, dateFrom: string, dat
     totalEncaisse,
     fraisLivraisonInterneTotal,
     chargesExternesTotal,
+    commissionAgentTotal,
     remisTotal,
     remisEnTransit,
     cashDetenuRestant,

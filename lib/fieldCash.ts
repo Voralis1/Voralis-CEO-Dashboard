@@ -16,6 +16,12 @@ export interface FieldCashRecap {
   totalEncaisse: number;
   fraisLivraisonInterneTotal: number;
   chargesExternesTotal: number;
+  // Commission agent (2026-07-14, demande CEO) : nb livraisons × 2000 (devise locale), extraite
+  // du montant restant plutôt qu'ajoutée comme coût séparé — cashDetenuRestant est net de cette
+  // commission (elle appartient à l'agent, pas à la trésorerie de l'entreprise). N'affecte PAS
+  // fraisLivraisonInterneTotal/resolveFraisLivraison (le calcul de marge reste inchangé) : c'est
+  // une reclassification d'affichage du cash détenu, pas un nouveau coût dans le moteur de marge.
+  commissionAgentTotal: number;
   remisTotal: number; // status = 'received' uniquement
   remisEnTransit: number; // status = 'pending' ou 'sent' — informatif, pas encore déduit
   cashDetenuRestant: number;

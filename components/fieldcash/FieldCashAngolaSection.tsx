@@ -4,7 +4,7 @@ import { Section, Badge, KpiCard } from "@/components/ui";
 import { useFilters } from "@/lib/filters";
 import { fetchFieldCashRecap, type FieldCashRecap } from "@/lib/fieldCash";
 import { fmtCurrency } from "@/lib/dashboardData";
-import { AlertTriangle, Loader2, Wallet, Truck, Fuel, Send } from "lucide-react";
+import { AlertTriangle, Loader2, Wallet, Truck, Fuel, Send, User } from "lucide-react";
 
 // Lecture directe des tables Supabase de la mini-app terrain "Field Cash Angola"
 // (field_deliveries, field_charges, field_remittances, field_delivery_params) — aucune saisie
@@ -65,7 +65,7 @@ export default function FieldCashAngolaSection() {
         </div>
       ) : recap ? (
         <>
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-5 gap-4">
             <KpiCard
               label="Total encaissé"
               value={fmtCurrency(recap.totalEncaisse, currency)}
@@ -74,6 +74,11 @@ export default function FieldCashAngolaSection() {
             <KpiCard label="Livraisons collectées" value={recap.nbDeliveries.toLocaleString("fr-FR")} icon={<Truck size={14} />} />
             <KpiCard label="Frais de livraison internes" value={fmt(recap.fraisLivraisonInterneTotal)} icon={<Fuel size={14} />} />
             <KpiCard label="Charges externes" value={fmtCurrency(recap.chargesExternesTotal, currency)} />
+            <KpiCard
+              label="Commission agent"
+              value={fmtCurrency(recap.commissionAgentTotal, currency)}
+              icon={<User size={14} />}
+            />
           </div>
 
           <Section title="Rapatriement">
@@ -98,7 +103,7 @@ export default function FieldCashAngolaSection() {
               <div>
                 <p className="text-xs text-emerald-700 font-medium">Montant restant (cash détenu)</p>
                 <p className="text-[10px] text-emerald-600 mt-0.5">
-                  Total encaissé − frais de livraison internes − charges externes − remis (reçu)
+                  Total encaissé − frais de livraison internes − charges externes − commission agent − remis (reçu)
                 </p>
               </div>
               <p className="text-xl font-semibold text-emerald-700">{fmt(recap.cashDetenuRestant)}</p>
