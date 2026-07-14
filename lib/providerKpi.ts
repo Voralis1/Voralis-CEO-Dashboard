@@ -14,21 +14,25 @@ import { getCanonicalCountry, COUNTRY_FLAGS } from "@/lib/countries";
 // Depuis 2026-07 : livres/caLivre/annulees/retournees sont basés sur le statut de LIVRAISON
 // (shipping_status pour ClickMarket/Coliscod/Africod Congo, status pour Shipsen) — 'processed'
 // = livré + encaissé (frais de livraison fixe de 11$ déjà déduit de caLivre), 'cancelled' =
-// annulée, 'return' ('refunded' chez Shipsen) = retournée. confirmes/tauxConfirmation/enAttente/
-// ruptureStock (funnel de confirmation) ont été retirés de ce tableau — ils restent calculés
-// côté SQL pour les alertes de la page d'accueil (lib/dashboardData.ts) mais ne sont plus
-// affichés ici.
+// annulée, 'return' ('refunded' chez Shipsen) = retournée. enAttente/ruptureStock (funnel de
+// confirmation) ont été retirés de ce tableau — ils restent calculés côté SQL pour les alertes
+// de la page d'accueil (lib/dashboardData.ts) mais ne sont plus affichés ici.
+// confirmes (colonne "Commandes confirmées", 2026-07-14) : compté sur confirmed_at, distinct de
+// totalCommandes (colonne "Total commande", 2026-07-14) qui compte TOUTES les commandes par
+// order_id sur la période (order_date), confirmées ou pas — équivalent à l'ancien total_leads/
+// total_orders avant qu'on ne le repurpose pour confirmes. retournees retiré de ce tableau
+// (2026-07-14) — reste calculé côté SQL (lib/copilot/snapshot.ts le lit indépendamment).
 export interface ProviderKpiRow {
   countryName: string;
   flag: string;
   currency: string; // devise_locale via market_settings — jamais additionnée entre pays
-  totalLeads: number;
+  totalCommandes: number; // toutes les commandes de la période, par order_id (total_leads/total_orders)
+  confirmes: number;
   doublons: number; // exclus du calcul des taux, affichés à part (pas des leads réels)
   livres: number;
-  tauxLivraison: number | null; // livres / totalLeads
+  tauxLivraison: number | null; // livres / total_leads (dénominateur SQL, pas confirmes)
   caLivre: number; // devise locale, net du frais de livraison fixe (11$/commande livrée)
   annulees: number;
-  retournees: number; // statut réel sur les 4 réseaux depuis 2026-07 (plus de trou de source)
 }
 
 export type ProviderId = "clickmarket" | "coliscod" | "africod-congo" | "shipsen";
@@ -63,13 +67,13 @@ function normalizeLeadsRow(
     countryName: name,
     flag,
     currency,
-    totalLeads: raw.total_leads,
+    totalCommandes: raw.total_leads,
+    confirmes: raw.confirmes,
     doublons: raw.doublons,
     livres: raw.livres,
     tauxLivraison: raw.taux_livraison,
     caLivre: raw.ca_livre,
     annulees: raw.annulees,
-    retournees: raw.retournees,
   };
 }
 
@@ -106,13 +110,13 @@ async function fetchShipsenRows(dateFrom: string, dateTo: string): Promise<Provi
       countryName: name,
       flag,
       currency,
-      totalLeads: raw.total_orders,
+      totalCommandes: raw.total_orders,
+      confirmes: raw.confirmed_orders,
       doublons: raw.doublons,
       livres: raw.livres,
       tauxLivraison: raw.taux_livraison,
       caLivre: raw.revenue_delivered,
       annulees: raw.annulees,
-      retournees: raw.retournees,
     };
   });
 }

@@ -1,6 +1,9 @@
 -- Africod Congo (AfriqueCOD, marché Congo) integration schema
 -- Run this once in Supabase → SQL Editor.
 -- Source: https://api.afriquecod.com/api/orders-paginated (X-Selected-Country: {"id":17,"name":"Congo","currency":"XAF",...})
+-- orders_type=leads (page "Orders", revert 2026-07-14 — voir clickmarket_schema.sql pour le
+-- détail : "leads" contient déjà les bonnes données de livraison, pas besoin de "Shipping
+-- Orders" en plus). annulees = confirmation_status='cancelled' (pas shipping_status).
 
 create table if not exists africod_congo_leads (
   order_id text primary key,               -- business reference, e.g. "AOD-xxxxx"
@@ -90,6 +93,13 @@ group by country_id;
 --                       = annulée, 'return' = retournée. ca_livre déduit 11$ de frais de
 --                       livraison fixe par commande livrée. taux_livraison passe de
 --                       livres/confirmes à livres/total_leads.
+--   - Décalage horaire WAT (2026-07-14) : le Congo-Brazzaville est en WAT (UTC+1). Nos colonnes
+--                       timestamptz sont stockées en UTC ; caster directement `col::date` lit
+--                       donc "aujourd'hui" avec 1h de retard par rapport à l'heure locale.
+--                       Vérifié précisément sur Coliscod (même fuseau) : filtre UTC = 68, filtre
+--                       décalé +1h = 72, widget natif = 72 (match exact). Fix appliqué aux 3
+--                       dates concernées (order_created_at, confirmed_at, delivered_at) en
+--                       castant `(col + interval '1 hour')::date` au lieu de `col::date`.
 drop function if exists kpi_africod_congo_marche_periode(date, date);
 create or replace function kpi_africod_congo_marche_periode(date_from date, date_to date)
 returns table (
@@ -111,15 +121,22 @@ language sql
 security invoker
 stable
 as $$
-  with funnel as (
+  with total as (
     select
       country_id,
       max(country_name) as country_name,
-      count(*) as total_leads,
-      count(*) filter (where confirmation_status = 'confirmed') as confirmes,
-      count(*) filter (where shipping_status = 'processed') as livres,
+      count(*) as total_leads
+    from africod_congo_leads
+    where order_created_at is not null
+      and (order_created_at + interval '1 hour')::date between date_from and date_to
+    group by country_id
+  ),
+  funnel as (
+    select
+      country_id,
+      max(country_name) as country_name,
       count(*) filter (where confirmation_status = 'double') as doublons,
-      count(*) filter (where shipping_status = 'cancelled') as annulees,
+      count(*) filter (where confirmation_status = 'cancelled') as annulees,
       count(*) filter (where shipping_status = 'return') as retournees,
       count(*) filter (
         where delivered_at is null
@@ -131,33 +148,46 @@ as $$
     where order_date between date_from and date_to
     group by country_id
   ),
+  confirmation as (
+    select
+      country_id,
+      max(country_name) as country_name,
+      count(*) as confirmes
+    from africod_congo_leads
+    where confirmed_at is not null
+      and (confirmed_at + interval '1 hour')::date between date_from and date_to
+    group by country_id
+  ),
   revenu_livre as (
     select
       country_id,
       max(country_name) as country_name,
+      count(*) as livres,
       coalesce(sum(total_price), 0) - 11 * count(*) as ca_livre
     from africod_congo_leads
-    where shipping_status = 'processed'
+    where shipping_status in ('processed', 'delivered', 'paid')
       and delivered_at is not null
-      and delivered_at::date between date_from and date_to
+      and (delivered_at + interval '1 hour')::date between date_from and date_to
     group by country_id
   )
   select
-    coalesce(f.country_id, r.country_id) as country_id,
-    coalesce(f.country_name, r.country_name) as country_name,
-    coalesce(f.total_leads, 0) as total_leads,
-    coalesce(f.confirmes, 0) as confirmes,
-    round(100.0 * coalesce(f.confirmes, 0) / nullif(f.total_leads, 0), 1) as taux_confirmation,
-    coalesce(f.livres, 0) as livres,
-    round(100.0 * coalesce(f.livres, 0) / nullif(f.total_leads, 0), 1) as taux_livraison,
+    coalesce(t.country_id, f.country_id, c.country_id, r.country_id) as country_id,
+    coalesce(t.country_name, f.country_name, c.country_name, r.country_name) as country_name,
+    coalesce(t.total_leads, 0) as total_leads,
+    coalesce(c.confirmes, 0) as confirmes,
+    round(100.0 * coalesce(c.confirmes, 0) / nullif(t.total_leads, 0), 1) as taux_confirmation,
+    coalesce(r.livres, 0) as livres,
+    round(100.0 * coalesce(r.livres, 0) / nullif(t.total_leads, 0), 1) as taux_livraison,
     coalesce(r.ca_livre, 0) as ca_livre,
     coalesce(f.en_attente, 0) as en_attente,
     coalesce(f.annulees, 0) as annulees,
     0 as rupture_stock,
     coalesce(f.doublons, 0) as doublons,
     coalesce(f.retournees, 0) as retournees
-  from funnel f
-  full outer join revenu_livre r on r.country_id = f.country_id;
+  from total t
+  full outer join funnel f on f.country_id = t.country_id
+  full outer join confirmation c on c.country_id = coalesce(t.country_id, f.country_id)
+  full outer join revenu_livre r on r.country_id = coalesce(t.country_id, f.country_id, c.country_id);
 $$;
 
 grant select on kpi_africod_congo_marche to authenticated;

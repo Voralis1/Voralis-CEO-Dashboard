@@ -30,7 +30,7 @@ import { createContext, useContext, useState, ReactNode } from "react";
 //   Cash rapatrié (statut)                                NON FILTRÉ — pas de date      —
 //                                                          d'événement disponible
 
-export type DateRangePreset = "today" | "7d" | "30d" | "thisMonth" | "lastMonth" | "custom";
+export type DateRangePreset = "today" | "7d" | "thisMonth" | "lastMonth" | "custom";
 
 function toISODate(d: Date): string {
   return d.toISOString().split("T")[0];
@@ -47,8 +47,6 @@ export function computePresetRange(preset: Exclude<DateRangePreset, "custom">): 
       return { dateFrom: today, dateTo: today };
     case "7d":
       return { dateFrom: toISODate(new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000)), dateTo: today };
-    case "30d":
-      return { dateFrom: toISODate(new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)), dateTo: today };
     case "thisMonth":
       return { dateFrom: toISODate(new Date(now.getFullYear(), now.getMonth(), 1)), dateTo: today };
     case "lastMonth": {
@@ -71,10 +69,10 @@ interface FilterState {
 const FilterContext = createContext<FilterState | null>(null);
 
 export function FilterProvider({ children }: { children: ReactNode }) {
-  // Valeur par défaut : 30 derniers jours. Lazy init (fonction passée à useState) pour ne
+  // Valeur par défaut : mois en cours. Lazy init (fonction passée à useState) pour ne
   // calculer la date qu'une seule fois, au montage, plutôt qu'à chaque rendu.
-  const [{ dateFrom, dateTo }, setRange] = useState(() => computePresetRange("30d"));
-  const [preset, setPresetState] = useState<DateRangePreset>("30d");
+  const [{ dateFrom, dateTo }, setRange] = useState(() => computePresetRange("thisMonth"));
+  const [preset, setPresetState] = useState<DateRangePreset>("thisMonth");
 
   function setPreset(next: Exclude<DateRangePreset, "custom">) {
     setRange(computePresetRange(next));

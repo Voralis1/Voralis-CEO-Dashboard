@@ -7,30 +7,29 @@ import type { FieldCashRecap, FieldCashAgentRow } from "@/lib/fieldCash";
 // par le RLS "authenticated" (même raison que lib/profitability.ts vs lib/thresholds.ts).
 //
 // Tables de la mini-app "Field Cash Angola" (schéma fourni par le CEO, 2026-07-08) :
-//   field_delivery_params(country, commission_agent, commission_manager, fuel_per_agent, currency)
-//   field_deliveries(country, delivery_date, agent, amount_collected)
-//   field_agent_days(country, work_date, agents_count)
+//   field_delivery_params(country, currency)
+//   field_deliveries(country, delivery_date, agent, amount_collected, delivery_fee)
 //   field_charges(country, charge_date, description, category, amount)
 //   field_remittances(country, remit_date, amount, method, status)
 //
+// fraisLivraisonInterneTotal = somme de field_deliveries.delivery_fee sur la période (2026-07-13,
+// remplace entièrement l'ancien calcul commission_agent/commission_manager/fuel_per_agent ×
+// nb livraisons/agents-jours — décision CEO : delivery_fee est directement la valeur réelle
+// saisie par livraison, plus fiable qu'une reconstitution par taux). field_agent_days n'est donc
+// plus lu ici (n'était utilisé que pour l'ancien calcul de carburant).
+//
 // Ce module ne dépend d'aucune table gérée par ce repo — country/field_delivery_params.currency
-// peuvent être absents pour un pays sans configuration Field Cash, auquel cas les coûts internes
-// restent NULL (jamais un 0 implicite qui fausserait la marge).
+// peuvent être absents pour un pays sans configuration Field Cash, auquel cas la devise reste NULL
+// (jamais un 0 implicite qui fausserait la marge).
 
 export async function fetchFieldCashRecap(country: string, dateFrom: string, dateTo: string): Promise<FieldCashRecap> {
-  const [deliveriesRes, agentDaysRes, chargesRes, remittancesRes, paramsRes] = await Promise.all([
+  const [deliveriesRes, chargesRes, remittancesRes, paramsRes] = await Promise.all([
     supabaseAdmin
       .from("field_deliveries")
-      .select("amount_collected")
+      .select("amount_collected, delivery_fee")
       .eq("country", country)
       .gte("delivery_date", dateFrom)
       .lte("delivery_date", dateTo),
-    supabaseAdmin
-      .from("field_agent_days")
-      .select("agents_count")
-      .eq("country", country)
-      .gte("work_date", dateFrom)
-      .lte("work_date", dateTo),
     supabaseAdmin
       .from("field_charges")
       .select("amount")
@@ -45,19 +44,16 @@ export async function fetchFieldCashRecap(country: string, dateFrom: string, dat
       .lte("remit_date", dateTo),
     supabaseAdmin
       .from("field_delivery_params")
-      .select("commission_agent, commission_manager, fuel_per_agent, currency")
+      .select("currency")
       .eq("country", country)
       .maybeSingle(),
   ]);
 
-  const deliveries = (deliveriesRes.data ?? []) as { amount_collected: number }[];
+  const deliveries = (deliveriesRes.data ?? []) as { amount_collected: number; delivery_fee: number | null }[];
   const nbDeliveries = deliveries.length;
   const totalEncaisse = deliveries.reduce((s, d) => s + (d.amount_collected ?? 0), 0);
+  const fraisLivraisonInterneTotal = deliveries.reduce((s, d) => s + (d.delivery_fee ?? 0), 0);
 
-  const agentsJoursTotal = ((agentDaysRes.data ?? []) as { agents_count: number }[]).reduce(
-    (s, d) => s + (d.agents_count ?? 0),
-    0
-  );
   const chargesExternesTotal = ((chargesRes.data ?? []) as { amount: number }[]).reduce((s, c) => s + (c.amount ?? 0), 0);
 
   const remittances = (remittancesRes.data ?? []) as { amount: number; status: string }[];
@@ -69,31 +65,15 @@ export async function fetchFieldCashRecap(country: string, dateFrom: string, dat
     .filter((r) => r.status === "pending" || r.status === "sent")
     .reduce((s, r) => s + (r.amount ?? 0), 0);
 
-  const params = paramsRes.data as
-    | { commission_agent: number; commission_manager: number; fuel_per_agent: number; currency: string }
-    | null;
+  const params = paramsRes.data as { currency: string } | null;
 
-  const commissionAgentTotal = params ? params.commission_agent * nbDeliveries : null;
-  const commissionManagerTotal = params ? params.commission_manager * nbDeliveries : null;
-  const carburantTotal = params ? params.fuel_per_agent * agentsJoursTotal : null;
-  const fraisLivraisonInterneTotal =
-    commissionAgentTotal != null && commissionManagerTotal != null && carburantTotal != null
-      ? commissionAgentTotal + commissionManagerTotal + carburantTotal
-      : null;
-
-  const cashDetenuRestant =
-    fraisLivraisonInterneTotal != null
-      ? totalEncaisse - fraisLivraisonInterneTotal - chargesExternesTotal - remisTotal
-      : null;
+  const cashDetenuRestant = totalEncaisse - fraisLivraisonInterneTotal - chargesExternesTotal - remisTotal;
 
   return {
     country,
     currency: params?.currency ?? null,
     nbDeliveries,
     totalEncaisse,
-    commissionAgentTotal,
-    commissionManagerTotal,
-    carburantTotal,
     fraisLivraisonInterneTotal,
     chargesExternesTotal,
     remisTotal,

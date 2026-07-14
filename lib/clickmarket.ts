@@ -48,7 +48,7 @@ export async function fetchClickMarketOrdersPage(
 ) {
   const doFetch = async (token: string) =>
     fetch(
-      `${BASE}/orders-paginated?per_page=${perPage}&page=${page}&orders_type=orders`,
+      `${BASE}/orders-paginated?per_page=${perPage}&page=${page}&orders_type=leads`,
       {
         headers: {
           Authorization: `Bearer ${token}`,

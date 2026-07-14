@@ -6,24 +6,19 @@ import { deliveryFeeLocal } from "@/lib/marketSettings";
 // 100% serveur (lib/thresholds.ts, lib/copilot/snapshot.ts) — même séparation client/serveur
 // déjà en place entre lib/profitability.ts (client) et lib/thresholds.ts (serveur).
 
-// Angola opère sa propre logistique interne (mini-app "Field Cash Angola") depuis le 2026-07-08 :
-// commission_agent/commission_manager sont multipliées par le nombre de livraisons du jour (pas
-// par agent individuellement), le carburant par le nombre d'agents actifs ce jour-là — ce n'est
-// PAS ventilable par agent depuis ces seuls agrégats (il faudrait une jointure sur
-// field_deliveries.agent, faite séparément par fetchFieldCashByAgent).
+// Angola opère sa propre logistique interne (mini-app "Field Cash Angola") depuis le 2026-07-08.
+// fraisLivraisonInterneTotal = somme de field_deliveries.delivery_fee sur la période (2026-07-13 —
+// valeur réelle saisie par livraison, plus de reconstitution par taux commission/carburant).
 export interface FieldCashRecap {
   country: string;
   currency: string | null; // null si field_delivery_params absent pour ce pays
   nbDeliveries: number;
   totalEncaisse: number;
-  commissionAgentTotal: number | null;
-  commissionManagerTotal: number | null;
-  carburantTotal: number | null;
-  fraisLivraisonInterneTotal: number | null; // null = field_delivery_params non configuré, jamais 0
+  fraisLivraisonInterneTotal: number;
   chargesExternesTotal: number;
   remisTotal: number; // status = 'received' uniquement
   remisEnTransit: number; // status = 'pending' ou 'sent' — informatif, pas encore déduit
-  cashDetenuRestant: number | null;
+  cashDetenuRestant: number;
   missingParams: boolean;
 }
 
@@ -80,7 +75,7 @@ export function resolveFraisLivraisonUnitaire(
   if (settings.delivery_model !== "internal_real_cost") {
     return { fraisLivraisonUnitaire: deliveryFeeLocal(settings.fx_to_usd), chargesExternesUnitaire: null };
   }
-  if (!recap || recap.nbDeliveries === 0 || recap.fraisLivraisonInterneTotal == null) {
+  if (!recap || recap.nbDeliveries === 0) {
     return { fraisLivraisonUnitaire: null, chargesExternesUnitaire: null };
   }
   return {

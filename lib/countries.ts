@@ -23,7 +23,7 @@ export const CANONICAL_COUNTRIES: CanonicalCountry[] = [
   { name: "Mali", currency: "XOF", flag: "🇲🇱", aliases: ["Mali", "ML", "MLI"] },
   { name: "Guinée", currency: "GNF", flag: "🇬🇳", aliases: ["Guinée", "Guinea", "GN", "GIN"] },
   { name: "Sénégal", currency: "XOF", flag: "🇸🇳", aliases: ["Sénégal", "Senegal", "SN", "SEN"] },
-  { name: "Côte d'Ivoire", currency: "XOF", flag: "🇨🇮", aliases: ["Côte d'Ivoire", "Cote d'Ivoire", "CI", "CIV"] },
+  { name: "Côte d'Ivoire", currency: "XOF", flag: "🇨🇮", aliases: ["Côte d'Ivoire", "Cote d'Ivoire", "CoteIvoire", "CI", "CIV"] },
   // Ajoutés 2026-07 : Burkina Faso rejoint le périmètre COD (déjà présent côté Meta Ads sous
   // l'alias "BF") — voir supabase/market_settings_add_bf_maroc_migration.sql pour le FX/coûts.
   // Maroc reste sans réseau logistique (source d'expéditions produit + marché Meta Ads

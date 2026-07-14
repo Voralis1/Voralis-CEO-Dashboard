@@ -7,9 +7,9 @@ import { fmtCurrency } from "@/lib/dashboardData";
 import { AlertTriangle, Loader2, Wallet, Truck, Fuel, Send } from "lucide-react";
 
 // Lecture directe des tables Supabase de la mini-app terrain "Field Cash Angola"
-// (field_deliveries, field_charges, field_remittances, field_agent_days, field_delivery_params)
-// — aucune saisie manuelle ici, aucun sync n8n : les données sont déjà dans Supabase, ce sont
-// les mêmes chiffres que la capture de la mini-app (voir lib/fieldCash.ts / lib/fieldCashServer.ts).
+// (field_deliveries, field_charges, field_remittances, field_delivery_params) — aucune saisie
+// manuelle ici, aucun sync n8n : les données sont déjà dans Supabase, ce sont les mêmes chiffres
+// que la capture de la mini-app (voir lib/fieldCash.ts / lib/fieldCashServer.ts).
 export default function FieldCashAngolaSection() {
   const { dateFrom, dateTo } = useFilters();
   const [recap, setRecap] = useState<FieldCashRecap | null>(null);
@@ -65,17 +65,6 @@ export default function FieldCashAngolaSection() {
         </div>
       ) : recap ? (
         <>
-          {recap.missingParams && (
-            <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs">
-              <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-              <p>
-                <strong>Configuration manquante</strong> — aucune ligne <code>field_delivery_params</code> pour
-                l&apos;Angola : commissions/carburant non calculables, affichés comme &ldquo;donnée manquante&rdquo;
-                plutôt qu&apos;un 0 qui fausserait la marge.
-              </p>
-            </div>
-          )}
-
           <div className="grid grid-cols-4 gap-4">
             <KpiCard
               label="Total encaissé"
@@ -86,27 +75,6 @@ export default function FieldCashAngolaSection() {
             <KpiCard label="Frais de livraison internes" value={fmt(recap.fraisLivraisonInterneTotal)} icon={<Fuel size={14} />} />
             <KpiCard label="Charges externes" value={fmtCurrency(recap.chargesExternesTotal, currency)} />
           </div>
-
-          <Section title="Décomposition des frais de livraison internes">
-            <div className="grid grid-cols-3 gap-4 text-xs">
-              <div>
-                <p className="text-slate-500 mb-1">Commission agents (total)</p>
-                <p className="text-slate-900 font-semibold text-sm">{fmt(recap.commissionAgentTotal)}</p>
-              </div>
-              <div>
-                <p className="text-slate-500 mb-1">Commission managers (total)</p>
-                <p className="text-slate-900 font-semibold text-sm">{fmt(recap.commissionManagerTotal)}</p>
-              </div>
-              <div>
-                <p className="text-slate-500 mb-1">Carburant (agents actifs × tarif/jour)</p>
-                <p className="text-slate-900 font-semibold text-sm">{fmt(recap.carburantTotal)}</p>
-              </div>
-            </div>
-            <p className="text-[10px] text-slate-400 mt-3">
-              Commissions calculées par livraison (pas par agent individuellement) — carburant calculé sur le nombre
-              d&apos;agents actifs par jour (field_agent_days), pas sur le nombre de livraisons.
-            </p>
-          </Section>
 
           <Section title="Rapatriement">
             <div className="grid grid-cols-2 gap-4 mb-4">

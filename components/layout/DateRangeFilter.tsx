@@ -5,7 +5,6 @@ import { useFilters, type DateRangePreset } from "@/lib/filters";
 const PRESETS: { value: Exclude<DateRangePreset, "custom">; label: string }[] = [
   { value: "today", label: "Aujourd'hui" },
   { value: "7d", label: "7 derniers jours" },
-  { value: "30d", label: "30 derniers jours" },
   { value: "thisMonth", label: "Mois en cours" },
   { value: "lastMonth", label: "Mois dernier" },
 ];

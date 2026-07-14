@@ -79,8 +79,8 @@ export default function ProviderKpiTable({ provider, countryFilter }: ProviderKp
     );
   }
 
-  const sorted = [...filteredRows].sort((a, b) => b.totalLeads - a.totalLeads);
-  const totalCommandes = filteredRows.reduce((s, r) => s + r.totalLeads, 0);
+  const sorted = [...filteredRows].sort((a, b) => b.totalCommandes - a.totalCommandes);
+  const totalConfirmees = filteredRows.reduce((s, r) => s + r.confirmes, 0);
 
   return (
     <>
@@ -91,13 +91,13 @@ export default function ProviderKpiTable({ provider, countryFilter }: ProviderKp
               <tr className="border-b border-slate-200">
                 {[
                   "Pays",
-                  "Commandes",
+                  "Total commande",
+                  "Commandes confirmées",
                   "Livrées",
                   "Taux livraison",
                   "AOV encaissé",
                   "CA livré encaissé",
                   "Annulées",
-                  "Retournées",
                   "Délai 1er contact",
                 ].map((h) => (
                   <th key={h} className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">
@@ -121,11 +121,12 @@ export default function ProviderKpiTable({ provider, countryFilter }: ProviderKp
                       </div>
                     </td>
                     <td className="px-3 py-3 text-slate-500">
-                      {r.totalLeads.toLocaleString("fr-FR")}
+                      {r.totalCommandes.toLocaleString("fr-FR")}
                       {r.doublons > 0 && (
                         <span className="block text-[10px] text-amber-600">dont {r.doublons} doublon(s)</span>
                       )}
                     </td>
+                    <td className="px-3 py-3 text-slate-700">{r.confirmes.toLocaleString("fr-FR")}</td>
                     <td className="px-3 py-3 text-slate-700">{r.livres.toLocaleString("fr-FR")}</td>
                     <td className="px-3 py-3">
                       <Badge variant={(r.tauxLivraison ?? 0) >= 70 ? "green" : (r.tauxLivraison ?? 0) >= 50 ? "yellow" : "red"}>
@@ -140,7 +141,6 @@ export default function ProviderKpiTable({ provider, countryFilter }: ProviderKp
                       {r.annulees.toLocaleString("fr-FR")}
                       <GapNote text="Motifs d'annulation non disponibles — aucune colonne reason code exposée par ce réseau." />
                     </td>
-                    <td className="px-3 py-3 text-slate-700">{r.retournees.toLocaleString("fr-FR")}</td>
                     <td className="px-3 py-3">
                       <GapBadge text="Timestamp du 1er appel call center absent sur les 4 réseaux — aucune colonne ne distingue la date de réception de la date du 1er contact (confirmed_at marque la fin de la confirmation, pas la première tentative)." />
                     </td>
@@ -157,8 +157,8 @@ export default function ProviderKpiTable({ provider, countryFilter }: ProviderKp
       </Section>
 
       <div className="grid grid-cols-2 gap-4 mt-4">
-        <Section title="Total commandes">
-          <p className="text-3xl font-bold text-emerald-600 mt-2">{totalCommandes.toLocaleString("fr-FR")}</p>
+        <Section title="Total commandes confirmées">
+          <p className="text-3xl font-bold text-emerald-600 mt-2">{totalConfirmees.toLocaleString("fr-FR")}</p>
         </Section>
         <Section title="CA livré encaissé par pays">
           <div className="space-y-1 mt-2">
