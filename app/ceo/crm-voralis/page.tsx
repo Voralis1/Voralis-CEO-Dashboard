@@ -144,8 +144,6 @@ export default function CrmVoralisPage() {
     );
   }
 
-  const outOfScopeCountries = data.byCountry.filter((c) => c.countryName == null);
-
   return (
     <div>
       <Topbar
@@ -230,14 +228,14 @@ export default function CrmVoralisPage() {
                 </tr>
               </thead>
               <tbody>
-                {sortedCountries.filter((c) => c.countryName != null).map((r) => {
+                {sortedCountries.map((r) => {
                   const overThreshold = r.payoutPerConfirmedUsd != null && r.payoutPerConfirmedUsd > PAYOUT_ALERT_THRESHOLD_USD;
                   return (
                     <tr key={r.countryCode} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                       <td className="px-3 py-3">
                         <div className="flex items-center gap-2 font-medium text-slate-900">
                           <span className="text-base">{r.flag}</span>
-                          {r.countryName}
+                          {r.countryName ?? r.countryCode}
                         </div>
                       </td>
                       <td className="px-3 py-3 text-slate-500">{r.totalOrders.toLocaleString("fr-FR")}</td>
@@ -263,20 +261,14 @@ export default function CrmVoralisPage() {
                     </tr>
                   );
                 })}
-                {sortedCountries.filter((c) => c.countryName != null).length === 0 && (
+                {sortedCountries.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-3 py-4 text-center text-slate-500">Aucun pays COD pour cette période.</td>
+                    <td colSpan={8} className="px-3 py-4 text-center text-slate-500">Aucun pays pour cette période.</td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
-          {outOfScopeCountries.length > 0 && (
-            <p className="text-xs text-amber-600 mt-3">
-              Codes pays hors périmètre COD (aucun market_settings associé, exclus du tableau) :{" "}
-              {outOfScopeCountries.map((c) => `${c.countryCode} (${c.totalOrders} commande${c.totalOrders > 1 ? "s" : ""})`).join(", ")}
-            </p>
-          )}
         </Section>
       </div>
     </div>

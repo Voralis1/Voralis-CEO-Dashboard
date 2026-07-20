@@ -1,4 +1,4 @@
-import { getCanonicalCountry } from "@/lib/countries";
+import { getCanonicalCountry, flagFromIsoAlpha2 } from "@/lib/countries";
 
 // CRM Voralis (/api/v1/reports/networks) — vérifié en direct le 2026-07-04 :
 //   - "by_country" est un bloc GLOBAL (tous affiliés confondus), pas un croisement
@@ -93,7 +93,7 @@ export async function fetchAffiliatesData(dateFrom: string, dateTo: string): Pro
     return {
       countryCode: row.country,
       countryName: canonical?.name ?? null,
-      flag: canonical?.flag ?? "🌍",
+      flag: canonical?.flag ?? flagFromIsoAlpha2(row.country) ?? "🌍",
       totalOrders: row.stats.total_orders,
       confirmedOrders: row.stats.confirmed_orders,
       deliveredOrders: row.stats.delivered_orders,

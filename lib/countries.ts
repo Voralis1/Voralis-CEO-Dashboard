@@ -53,3 +53,14 @@ export function getCountryCurrency(nameOrAlias: string): string {
 export const COUNTRY_FLAGS: Record<string, string> = Object.fromEntries(
   CANONICAL_COUNTRIES.flatMap((c) => c.aliases.map((alias) => [alias, c.flag]))
 );
+
+// Drapeau générique pour un pays HORS périmètre COD (pas de CanonicalCountry, donc pas de
+// devise/FX associée — cf. lib/affiliates.ts) : un code ISO alpha-2 (ex. "IN") se convertit
+// directement en emoji drapeau via les symboles indicateurs régionaux Unicode (U+1F1E6 = 'A'),
+// sans avoir besoin d'une table de mapping. Les codes alpha-3 non reconnus (aucune table
+// alpha-3 -> alpha-2 fiable ici) retombent sur null, affiché en 🌍 par l'appelant.
+export function flagFromIsoAlpha2(code: string): string | null {
+  if (!/^[A-Za-z]{2}$/.test(code)) return null;
+  const codePoints = code.toUpperCase().split("").map((c) => 127397 + c.charCodeAt(0));
+  return String.fromCodePoint(...codePoints);
+}
