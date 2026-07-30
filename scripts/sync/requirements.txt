@@ -1,0 +1,7 @@
+requests>=2.31
+python-dotenv>=1.0
+
+# Corrige les erreurs SSL "unable to get local issuer certificate" derrière un proxy/antivirus
+# d'entreprise qui inspecte le TLS (requests utilise son propre magasin certifi par défaut, qui ne
+# connaît pas ce certificat — ce package patche ssl pour utiliser aussi le magasin de l'OS).
+pip-system-certs>=4.0

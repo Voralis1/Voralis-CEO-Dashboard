@@ -1,0 +1,32 @@
+name: Sync Shipsen → Supabase
+
+# Remplace n8n/shipsen-leads-sync.workflow.json + n8n/shipsen-sync.workflow.json (2026-07-29).
+# 5 min = le minimum réaliste sur GitHub Actions (cron déclaré plus court n'est pas garanti, et
+# l'exécution peut être retardée de quelques minutes en période de forte charge côté GitHub —
+# accepté comme compromis "quasi temps réel" au lieu d'un vrai temps réel).
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {} # permet un lancement manuel depuis l'onglet Actions, pour tester sans attendre le cron
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5 # un run qui traîne ne doit jamais chevaucher le suivant
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: pip install -r scripts/sync/requirements.txt
+
+      - name: Lancer la synchro Shipsen
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SHIPSEN_EMAIL: ${{ secrets.SHIPSEN_EMAIL }}
+          SHIPSEN_PASSWORD: ${{ secrets.SHIPSEN_PASSWORD }}
+        run: python scripts/sync/sync_shipsen.py

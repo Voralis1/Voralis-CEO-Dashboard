@@ -3,6 +3,7 @@ import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Topbar from "@/components/layout/Topbar";
 import ProviderKpiTable from "@/components/kpi/ProviderKpiTable";
+import ShipsenAnalyticsSnapshotSection from "@/components/kpi/ShipsenAnalyticsSnapshot";
 import FieldCashAngolaSection from "@/components/fieldcash/FieldCashAngolaSection";
 import { COUNTRY_FLAGS } from "@/lib/countries";
 import { fetchPublicMarketSettings } from "@/lib/marketSettings";
@@ -111,7 +112,10 @@ function LogisticsCodContent() {
         {/* Un tableau standard par réseau (composant du Prompt 2, réutilisé tel quel) */}
         <div className="space-y-8">
           {networksToShow.map((id) => (
-            <ProviderKpiTable key={id} provider={id} countryFilter={countryFilter} />
+            <div key={id} className="space-y-5">
+              <ProviderKpiTable provider={id} countryFilter={countryFilter} />
+              {id === "shipsen" && <ShipsenAnalyticsSnapshotSection countryFilter={countryFilter} />}
+            </div>
           ))}
         </div>
 

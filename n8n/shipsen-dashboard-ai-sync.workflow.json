@@ -1,0 +1,138 @@
+{
+  "name": "Shipsen Dashboard (IA) → Supabase sync",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "f5f5f5f5-0001-4000-8000-000000000001",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -640,
+        0
+      ],
+      "notes": "Toutes les heures plutôt que 30 min (comme les 3 autres workflows Shipsen) : ce workflow lance un vrai navigateur + un appel IA par pays, nettement plus lourd/lent/coûteux qu'un simple appel REST — pas besoin de la même fréquence pour un instantané 'This Month'."
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cfg-1",
+              "name": "shipsen_email",
+              "value": "COLLEZ_L_EMAIL_SHIPSEN_ICI",
+              "type": "string"
+            },
+            {
+              "id": "cfg-2",
+              "name": "shipsen_password",
+              "value": "COLLEZ_LE_MOT_DE_PASSE_SHIPSEN_ICI",
+              "type": "string"
+            },
+            {
+              "id": "cfg-3",
+              "name": "supabase_url",
+              "value": "https://VOTRE-PROJET.supabase.co",
+              "type": "string"
+            },
+            {
+              "id": "cfg-4",
+              "name": "supabase_service_role_key",
+              "value": "COLLEZ_VOTRE_SUPABASE_SERVICE_ROLE_KEY_ICI",
+              "type": "string"
+            },
+            {
+              "id": "cfg-5",
+              "name": "browserless_url",
+              "value": "http://browserless:3000",
+              "type": "string"
+            },
+            {
+              "id": "cfg-6",
+              "name": "browserless_token",
+              "value": "COLLEZ_LE_TOKEN_DU_CONTENEUR_BROWSERLESS_ICI",
+              "type": "string"
+            },
+            {
+              "id": "cfg-7",
+              "name": "openrouter_api_key",
+              "value": "COLLEZ_VOTRE_CLE_OPENROUTER_ICI",
+              "type": "string"
+            },
+            {
+              "id": "cfg-8",
+              "name": "ai_model",
+              "value": "moonshotai/kimi-k3",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "f5f5f5f5-0002-4000-8000-000000000002",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -400,
+        0
+      ],
+      "notes": "openrouter_api_key est ici en clair pour rester cohérent avec le style des 3 autres workflows Shipsen — à remplacer par un vrai Credential n8n dès que possible (une clé IA facturée à l'usage mérite mieux qu'un Set node en clair). ai_model est le slug OpenRouter du modèle (ex. moonshotai/kimi-k3) — changez cette seule valeur pour tester un autre modèle, aucune ligne de code à toucher."
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $input.item.json;\n\nconst BROWSERLESS_URL = cfg.browserless_url; // ex. http://browserless:3000 (réseau Docker interne à n8n) ou http://localhost:3000\nconst BROWSERLESS_TOKEN = cfg.browserless_token; // le TOKEN passé au conteneur au lancement (docker run ...)\nconst SHIPSEN_BASE = \"https://api.shipsen.com\";\nconst SUPABASE_URL = cfg.supabase_url;\nconst SUPABASE_SERVICE_ROLE_KEY = cfg.supabase_service_role_key;\n// ⚠️ OPENROUTER_API_KEY est ici dans le nœud \"Config\" pour rester cohérent avec le style des 3\n// autres workflows Shipsen (email/mdp/clé Supabase en clair dans un Set node) — mais une clé IA\n// facturée à l'usage mérite mieux : remplacez ce champ par un vrai Credential n8n (HTTP Header\n// Auth ou credential \"OpenAI\" pointé sur https://openrouter.ai/api/v1) dès que possible.\nconst OPENROUTER_API_KEY = cfg.openrouter_api_key;\nconst AI_MODEL = cfg.ai_model || \"moonshotai/kimi-k3\"; // slug OpenRouter — changez ici pour tester un autre modèle, aucune autre ligne à toucher\n\n// ⚠️⚠️⚠️ 3 VALEURS À VÉRIFIER MANUELLEMENT AVANT DE LANCER CE WORKFLOW (voir les notes du nœud\n// pour la méthode exacte) — je ne les ai PAS vérifiées moi-même, je n'ai pas d'accès à une session\n// Shipsen connectée. Les deviner au hasard casserait silencieusement le scraping.\nconst LOCALSTORAGE_TOKEN_KEY = \"TODO_cle_localstorage_a_verifier\"; // Application → Local Storage sur app.shipsen.com après connexion manuelle\nconst DASHBOARD_URL_TEMPLATE = \"https://app.shipsen.com/TODO_route_dashboard?warehouse={warehouseId}\"; // copier l'URL réelle de la barre d'adresse sur la page du screenshot\nconst MONTH_FILTER_LABEL = \"This Month\"; // texte exact du filtre — à activer seulement si le défaut au chargement n'est PAS déjà \"This Month\"\n\n// Mêmes 4 warehouses que les 3 autres workflows Shipsen (même compte, un seul token API).\nconst WAREHOUSES = [\n  { country: \"Mali\", currency: \"XOF\", warehouse: \"619ff174286e83d6aa8f60ba\" },\n  { country: \"Guinea\", currency: \"GNF\", warehouse: \"61ceeaa3d08e37d6dca5f6b9\" },\n  { country: \"Senegal\", currency: \"XOF\", warehouse: \"61cee91cd08e37d6dca5e4fb\" },\n  { country: \"CoteIvoire\", currency: \"XOF\", warehouse: \"619ed4e22c5c08be6fcfd977\" },\n];\n\nfunction bodyPreview(body) {\n  try {\n    return JSON.stringify(body).slice(0, 500);\n  } catch {\n    return String(body).slice(0, 500);\n  }\n}\n\n// ─── 1. Login API Shipsen (même mécanisme que shipsen-sync.workflow.json) — on récupère le JWT\n// via l'endpoint officiel plutôt que de simuler la saisie du formulaire de login dans le\n// navigateur : un champ email/password peut changer d'ID CSS, l'API documentée non.\nasync function shipsenLogin() {\n  const res = await this.helpers.httpRequest({\n    method: \"POST\",\n    url: `${SHIPSEN_BASE}/users/login`,\n    headers: { \"Content-Type\": \"application/json;charset=utf-8\" },\n    body: { email: cfg.shipsen_email, password: cfg.shipsen_password },\n    json: true,\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true,\n  });\n  if (res.statusCode < 200 || res.statusCode >= 300) {\n    throw new Error(`POST /users/login → HTTP ${res.statusCode}: ${bodyPreview(res.body)}`);\n  }\n  const h = (res.body && res.body.headers) || {};\n  const token = h[\"X-Auth-Token\"] || h[\"x-auth-token\"];\n  if (!token) throw new Error(`Login OK mais pas de token: ${bodyPreview(res.body)}`);\n  return token;\n}\n\n// ─── 2. Script exécuté CÔTÉ BROWSERLESS (pas ici) : injecte le token en localStorage, charge le\n// dashboard du warehouse, et renvoie le TEXTE BRUT de la page — on laisse l'IA (étape 3) faire le\n// tri plutôt que d'extraire avec des sélecteurs CSS fragiles qui cassent au moindre redesign.\nfunction buildPuppeteerScript(dashboardUrl, token) {\n  return `\nmodule.exports = async ({ page }) => {\n  await page.goto(\"https://app.shipsen.com/\", { waitUntil: \"domcontentloaded\" });\n  await page.evaluate((tok, key) => localStorage.setItem(key, tok), ${JSON.stringify(token)}, ${JSON.stringify(LOCALSTORAGE_TOKEN_KEY)});\n  await page.goto(${JSON.stringify(dashboardUrl)}, { waitUntil: \"networkidle2\" });\n\n  // TODO : si le filtre par défaut au chargement n'est PAS déjà \"This Month\", décommenter et\n  // remplacer par le vrai sélecteur du dropdown de période (inspecté sur le vrai dashboard) :\n  // await page.click(\"SELECTEUR_DROPDOWN_PERIODE_A_REMPLACER\");\n  // await page.click(\"text/${MONTH_FILTER_LABEL}\");\n  // await page.waitForTimeout(1500);\n\n  await page.waitForSelector(\"body\", { timeout: 15000 });\n  const text = await page.evaluate(() => document.body.innerText);\n  return { data: text, type: \"application/json\" };\n};\n`.trim();\n}\n\nasync function scrapeDashboard(dashboardUrl, token) {\n  const script = buildPuppeteerScript(dashboardUrl, token);\n  const res = await this.helpers.httpRequest({\n    method: \"POST\",\n    url: `${BROWSERLESS_URL}/function?token=${BROWSERLESS_TOKEN}`,\n    headers: { \"Content-Type\": \"application/javascript\" },\n    body: script,\n    json: false,\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true,\n  });\n  if (res.statusCode < 200 || res.statusCode >= 300) {\n    throw new Error(`Browserless /function → HTTP ${res.statusCode}: ${bodyPreview(res.body)}`);\n  }\n  return typeof res.body === \"string\" ? res.body : JSON.stringify(res.body);\n}\n\n// ─── 3. IA (OpenRouter, modèle configurable via AI_MODEL) : extraction STRICTE — jamais de\n// calcul/estimation, uniquement recopier les nombres explicitement visibles dans le texte\n// scrappé. temperature=0 pour limiter la variance d'une lecture à l'autre.\nconst EXTRACTION_SYSTEM_PROMPT = `Tu reçois le texte brut d'une page de dashboard Shipsen (widgets \"Confirmation Rate\" et \"Delivery Rate\", période \"This Month\"). Extrais UNIQUEMENT les valeurs explicitement affichées, sans jamais calculer ni estimer une valeur absente — mets null si un champ n'apparaît pas dans le texte. Réponds STRICTEMENT en JSON, sans texte autour, avec ce schéma exact :\n{\n  \"confirmation_rate\": number|null,\n  \"confirmed_orders\": number|null,\n  \"total_orders\": number|null,\n  \"cancelled_orders\": number|null,\n  \"delivery_rate\": number|null,\n  \"total_shippings\": number|null,\n  \"received\": number|null,\n  \"paid\": number|null,\n  \"cancelled_shipments\": number|null,\n  \"processed\": number|null\n}`;\n\nasync function extractWithAI(pageText) {\n  const res = await this.helpers.httpRequest({\n    method: \"POST\",\n    url: \"https://openrouter.ai/api/v1/chat/completions\",\n    headers: {\n      \"Content-Type\": \"application/json\",\n      Authorization: `Bearer ${OPENROUTER_API_KEY}`,\n    },\n    body: {\n      model: AI_MODEL,\n      temperature: 0,\n      messages: [\n        { role: \"system\", content: EXTRACTION_SYSTEM_PROMPT },\n        { role: \"user\", content: pageText.slice(0, 8000) },\n      ],\n    },\n    json: true,\n    returnFullResponse: true,\n    ignoreHttpStatusErrors: true,\n  });\n  if (res.statusCode < 200 || res.statusCode >= 300) {\n    throw new Error(`OpenRouter → HTTP ${res.statusCode}: ${bodyPreview(res.body)}`);\n  }\n  const content = (res.body && res.body.choices && res.body.choices[0] && res.body.choices[0].message && res.body.choices[0].message.content) || \"\";\n  try {\n    return JSON.parse(content);\n  } catch {\n    throw new Error(`Réponse IA non-JSON, extraction annulée pour éviter de stocker une valeur inventée: ${content.slice(0, 300)}`);\n  }\n}\n\n// ─── 4. Boucle sur les 4 warehouses — une erreur sur un pays n'empêche pas les 3 autres ──────\nconst rows = [];\nconst errors = [];\nconst today = new Date().toISOString().slice(0, 10);\n\nlet token;\ntry {\n  token = await shipsenLogin.call(this);\n} catch (err) {\n  return [{ json: { upserted: 0, errors: [{ country: \"ALL\", message: `Login échoué — ${err.message}` }], finished_at: new Date().toISOString() } }];\n}\n\nfor (const wh of WAREHOUSES) {\n  try {\n    const dashboardUrl = DASHBOARD_URL_TEMPLATE.replace(\"{warehouseId}\", wh.warehouse);\n    const pageText = await scrapeDashboard.call(this, dashboardUrl, token);\n    const extracted = await extractWithAI.call(this, pageText);\n\n    rows.push({\n      country: wh.country,\n      period_label: \"this_month\",\n      snapshot_date: today,\n      confirmation_rate: extracted.confirmation_rate,\n      confirmed_orders: extracted.confirmed_orders,\n      total_orders: extracted.total_orders,\n      cancelled_orders: extracted.cancelled_orders,\n      delivery_rate: extracted.delivery_rate,\n      total_shippings: extracted.total_shippings,\n      received: extracted.received,\n      paid: extracted.paid,\n      cancelled_shipments: extracted.cancelled_shipments,\n      processed: extracted.processed,\n      raw_text: pageText.slice(0, 4000),\n      model_used: AI_MODEL,\n      synced_at: new Date().toISOString(),\n    });\n  } catch (err) {\n    errors.push({ country: wh.country, message: err.message });\n  }\n}\n\n// ─── 5. Upsert Supabase — clé (country, period_label, snapshot_date) : une ligne PAR JOUR PAR\n// PAYS, jamais écrasée silencieusement (historique/audit, voir shipsen_dashboard_snapshot_schema.sql).\nlet upserted = 0;\nif (rows.length > 0) {\n  try {\n    const res = await this.helpers.httpRequest({\n      method: \"POST\",\n      url: `${SUPABASE_URL}/rest/v1/shipsen_dashboard_snapshot?on_conflict=country,period_label,snapshot_date`,\n      headers: {\n        \"Content-Type\": \"application/json\",\n        apikey: SUPABASE_SERVICE_ROLE_KEY,\n        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,\n        Prefer: \"resolution=merge-duplicates,return=minimal\",\n      },\n      body: rows,\n      json: true,\n      returnFullResponse: true,\n      ignoreHttpStatusErrors: true,\n    });\n    if (res.statusCode < 200 || res.statusCode >= 300) {\n      throw new Error(`HTTP ${res.statusCode}: ${bodyPreview(res.body)}`);\n    }\n    upserted = rows.length;\n  } catch (err) {\n    errors.push({ country: \"SUPABASE_UPSERT\", message: err.message });\n  }\n}\n\nreturn [{ json: { upserted, errors, finished_at: new Date().toISOString() } }];\n"
+      },
+      "id": "f5f5f5f5-0003-4000-8000-000000000003",
+      "name": "Scrape Shipsen Dashboard (IA) → Supabase",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        0
+      ],
+      "notes": "⚠️ 3 VALEURS À VÉRIFIER AVANT LE PREMIER LANCEMENT (voir les constantes LOCALSTORAGE_TOKEN_KEY / DASHBOARD_URL_TEMPLATE / MONTH_FILTER_LABEL en haut du code) — non vérifiées, aucun accès à une session Shipsen connectée pour les confirmer :\n1. LOCALSTORAGE_TOKEN_KEY : ouvrez app.shipsen.com dans un vrai navigateur, connectez-vous, ouvrez les DevTools → onglet Application → Local Storage → notez la clé exacte sous laquelle le token JWT est stocké (probablement un nom comme 'token'/'authToken'/'x-auth-token', à confirmer).\n2. DASHBOARD_URL_TEMPLATE : copiez l'URL exacte de la barre d'adresse quand vous êtes sur la page du screenshot (celle avec Confirmation Rate/Delivery Rate) pour un warehouse donné, et remplacez la partie warehouse par le placeholder {warehouseId}.\n3. MONTH_FILTER_LABEL / sélecteur du dropdown : vérifiez si 'This Month' est déjà le filtre par défaut au chargement de cette page (dans ce cas rien à faire) ou s'il faut cliquer dessus explicitement (dans ce cas, décommentez les 2 lignes page.click dans buildPuppeteerScript et remplacez SELECTEUR_DROPDOWN_PERIODE_A_REMPLACER par le vrai sélecteur CSS du dropdown, inspecté avec DevTools → clic droit sur le dropdown → Inspecter).\n\nCe workflow COMPLÈTE les 3 autres syncs Shipsen (ne les remplace pas) : ca_livre/revenue_delivered restent fiables côté API (basés sur paid_at/processed_at, une date d'événement immuable) — seuls les compteurs 'statut EN CE MOMENT' (Processed/Cancelled notamment) divergent de l'API et sont donc capturés ici via le dashboard web, qui lui semble à jour. Voir supabase/shipsen_dashboard_snapshot_schema.sql pour la table cible."
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Scrape Shipsen Dashboard (IA) → Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
