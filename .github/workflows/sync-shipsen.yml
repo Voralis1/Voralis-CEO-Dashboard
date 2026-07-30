@@ -1,13 +1,21 @@
 name: Sync Shipsen → Supabase
 
 # Remplace n8n/shipsen-leads-sync.workflow.json + n8n/shipsen-sync.workflow.json (2026-07-29).
-# 5 min = le minimum réaliste sur GitHub Actions (cron déclaré plus court n'est pas garanti, et
-# l'exécution peut être retardée de quelques minutes en période de forte charge côté GitHub —
-# accepté comme compromis "quasi temps réel" au lieu d'un vrai temps réel).
+#
+# ⚠️ Le déclencheur `schedule` de GitHub Actions s'est avéré peu fiable pour un intervalle de 5
+# min (vérifié en direct le 2026-07-30 : ~1h30-2h entre exécutions au lieu de 5 min — file
+# d'attente best-effort côté GitHub, aggravée sur les repos publics/gratuits, non réparable par
+# la config de ce fichier). La cadence réelle de 5 min vient désormais d'un déclencheur EXTERNE
+# fiable : pg_cron + pg_net dans Supabase, qui appelle POST .../actions/workflows/.../dispatches
+# (voir la conversation du 2026-07-30 pour le detail du setup SQL — vault.create_secret pour le
+# PAT GitHub, cron.schedule pour la planification).
+#
+# Le `schedule` horaire ci-dessous n'est qu'un FILET DE SÉCURITÉ (defense in depth) si jamais le
+# déclencheur pg_cron tombe en panne silencieusement — pas la cadence principale.
 on:
   schedule:
-    - cron: "*/5 * * * *"
-  workflow_dispatch: {} # permet un lancement manuel depuis l'onglet Actions, pour tester sans attendre le cron
+    - cron: "0 * * * *"
+  workflow_dispatch: {} # déclenché par pg_cron/pg_net toutes les 5 min, ou manuellement depuis l'onglet Actions
 
 jobs:
   sync:
