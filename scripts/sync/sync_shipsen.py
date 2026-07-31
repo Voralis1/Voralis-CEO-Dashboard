@@ -24,6 +24,7 @@ appeler manuellement depuis un REPL — pas dans le flux normal du script).
 
 from __future__ import annotations
 
+import argparse
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -64,15 +65,19 @@ def shipsen_login() -> str:
     return token
 
 
-def fetch_paginated(path: str, warehouse: str, token: str, window_start: datetime) -> list[dict]:
+def fetch_paginated(
+    path: str, warehouse: str, token: str, window_start: datetime, max_pages: int = MAX_PAGES_PER_WAREHOUSE
+) -> list[dict]:
     """Pagine tant qu'une page contient au moins une ligne dans la fenêtre — s'arrête tôt si une
     page entière est plus ancienne que window_start (suppose un tri newest-first, voir avertissement
-    en tête de fichier), plafonné par MAX_PAGES_PER_WAREHOUSE dans tous les cas."""
+    en tête de fichier), plafonné par max_pages dans tous les cas (par défaut MAX_PAGES_PER_
+    WAREHOUSE — la synchro planifiée régulière ne doit JAMAIS dépasser ce plafond bas ; seul le
+    rattrapage historique ponctuel (main(), option --since) le relève explicitement)."""
     all_results: list[dict] = []
     page = 1
     last_page = 1
 
-    while page <= last_page and page <= MAX_PAGES_PER_WAREHOUSE:
+    while page <= last_page and page <= max_pages:
         res = requests.get(
             f"{SHIPSEN_BASE}{path}",
             params={"warehouse": warehouse, "limit": LIMIT, "page": page},
@@ -112,8 +117,8 @@ def get_reference_date(raw: dict, path: str) -> datetime | None:
         return None
 
 
-def sync_leads(warehouse: dict, token: str, window_start: datetime) -> int:
-    raw_orders = fetch_paginated("/orders/search", warehouse["warehouse"], token, window_start)
+def sync_leads(warehouse: dict, token: str, window_start: datetime, max_pages: int = MAX_PAGES_PER_WAREHOUSE) -> int:
+    raw_orders = fetch_paginated("/orders/search", warehouse["warehouse"], token, window_start, max_pages)
     rows = []
     now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -152,8 +157,8 @@ def sync_leads(warehouse: dict, token: str, window_start: datetime) -> int:
     return len(rows)
 
 
-def sync_shippings(warehouse: dict, token: str, window_start: datetime) -> int:
-    raw_shippings = fetch_paginated("/shippings/search", warehouse["warehouse"], token, window_start)
+def sync_shippings(warehouse: dict, token: str, window_start: datetime, max_pages: int = MAX_PAGES_PER_WAREHOUSE) -> int:
+    raw_shippings = fetch_paginated("/shippings/search", warehouse["warehouse"], token, window_start, max_pages)
     rows = []
     now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -196,106 +201,46 @@ def sync_shippings(warehouse: dict, token: str, window_start: datetime) -> int:
     return len(rows)
 
 
-def fetch_analytics(warehouse: str, token: str, date_type: str = "thismonth") -> dict:
-    """Endpoint réel du dashboard web Shipsen (trouvé le 2026-07-29 via DevTools, PAS une API
-    documentée officiellement) : /analytics/getTotalOrdersPaid, découpage journalier, à sommer
-    nous-mêmes. Remplace l'approximation par /orders/search+/shippings/search pour les compteurs
-    'statut EN CE MOMENT' (confirmées/processed/cancelled) — ces derniers dérivaient car un
-    shipment qui avance au-delà d'un certain stade sort du périmètre renvoyé par /shippings/search
-    (voir n8n/shipsen-sync.workflow.json, fix synced_at du même jour). Vérifié en direct avec le
-    CEO le 2026-07-29 : les totaux calculés ici matchent exactement l'écran (Guinée, This Month).
-
-    ⚠️ DateType n'accepte QUE 'today'/'yesterday'/'thismonth'/'lastmonth' de façon fiable — toute
-    autre valeur ('thisweek'/'thisyear'/'all'/'custom') retombe silencieusement sur le même
-    comportement par défaut (vérifié en direct : résultats identiques pour thisyear/lastyear/all/
-    custom) — PAS de plage de dates arbitraire possible ici, contrairement au sélecteur "De/À" du
-    dashboard CEO. Cette source ne remplace donc PAS le calcul existant pour les périodes libres,
-    seulement pour les 4 préréglages ci-dessus.
-
-    ⚠️ Incohérence de nommage côté API : 'sumCancelled' (confirmation) vs 'sumCanceled' (livraison)
-    — un seul L pour la livraison, deux pour la confirmation. Bien réel, pas une faute de frappe
-    ici.
-    """
-    base = f"https://api.shipsen.com/analytics/getTotalOrdersPaid"
-
-    res_confirm = requests.get(
-        base,
-        params={"DateType": date_type, "Response": "ConfirmationRate", "warehouse": warehouse},
-        headers={"X-Auth-Token": token, "Accept": "application/json"},
-        timeout=30,
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Synchro Shipsen → Supabase. Sans argument : fenêtre glissante courte, "
+        "sûre pour tourner toutes les 3-5 min (comportement utilisé par GitHub Actions/pg_cron, "
+        "NE PAS CHANGER). Avec --since : rattrapage historique PONCTUEL, à lancer manuellement "
+        "une fois (jamais sur le scheduler régulier — voir avertissement au premier run)."
     )
-    res_delivery = requests.get(
-        base,
-        params={"DateType": date_type, "Response": "Delivery", "warehouse": warehouse},
-        headers={"X-Auth-Token": token, "Accept": "application/json"},
-        timeout=30,
+    parser.add_argument(
+        "--since",
+        type=str,
+        default=None,
+        help="Date de départ du rattrapage historique, format AAAA-MM-JJ (ex. 2025-06-01). "
+        "Absent = comportement par défaut (fenêtre glissante de %d jours)." % DEFAULT_ROLLING_WINDOW_DAYS,
     )
-    if not res_confirm.ok or not res_delivery.ok:
-        raise RuntimeError(
-            f"/analytics/getTotalOrdersPaid → HTTP {res_confirm.status_code}/{res_delivery.status_code}: "
-            f"{res_confirm.text[:200]} | {res_delivery.text[:200]}"
-        )
-
-    confirm_rows = (res_confirm.json().get("content") or {}).get("ResultRateConfirm") or []
-    delivery_rows = (res_delivery.json().get("content") or {}).get("ResultRateDelivry") or []
-
-    total_orders = sum(r.get("count", 0) for r in confirm_rows)
-    confirmed = sum(r.get("sumConfirmed", 0) for r in confirm_rows)
-    cancelled_orders = sum(r.get("sumCancelled", 0) for r in confirm_rows)
-
-    total_shippings = sum(r.get("count", 0) for r in delivery_rows)
-    processed = sum(r.get("sumProcessed", 0) for r in delivery_rows)
-    paid = sum(r.get("sumPaid", 0) for r in delivery_rows)
-    cancelled_shipments = sum(r.get("sumCanceled", 0) for r in delivery_rows)  # 1 seul 'l', voir docstring
-    received = sum(r.get("sumReceived", 0) for r in delivery_rows)
-
-    # Formules vérifiées en direct contre l'écran du CEO le 2026-07-29 (Guinée, This Month).
-    confirmation_rate = round(100.0 * confirmed / total_orders, 2) if total_orders else None
-    delivery_rate = round(100.0 * (received + paid + processed) / total_shippings, 2) if total_shippings else None
-
-    return {
-        "confirmation_rate": confirmation_rate,
-        "confirmed_orders": confirmed,
-        "total_orders": total_orders,
-        "cancelled_orders": cancelled_orders,
-        "delivery_rate": delivery_rate,
-        "total_shippings": total_shippings,
-        "received": received,
-        "paid": paid,
-        "cancelled_shipments": cancelled_shipments,
-        "processed": processed,
-        "raw_confirm": res_confirm.text[:4000],
-        "raw_delivery": res_delivery.text[:4000],
-    }
-
-
-def sync_analytics_snapshot(warehouse: dict, token: str) -> dict:
-    data = fetch_analytics(warehouse["warehouse"], token, "thismonth")
-    now = datetime.now(timezone.utc)
-    row = {
-        "country": warehouse["country"],
-        "period_label": "this_month",
-        "snapshot_date": now.date().isoformat(),
-        "confirmation_rate": data["confirmation_rate"],
-        "confirmed_orders": data["confirmed_orders"],
-        "total_orders": data["total_orders"],
-        "cancelled_orders": data["cancelled_orders"],
-        "delivery_rate": data["delivery_rate"],
-        "total_shippings": data["total_shippings"],
-        "received": data["received"],
-        "paid": data["paid"],
-        "cancelled_shipments": data["cancelled_shipments"],
-        "processed": data["processed"],
-        "raw_text": (data["raw_confirm"] + "\n---\n" + data["raw_delivery"])[:4000],
-        "model_used": None,  # colonne héritée du plan de scraping IA abandonné — endpoint réel ici, pas d'IA
-        "synced_at": now.isoformat(),
-    }
-    supabase_upsert("shipsen_dashboard_snapshot", [row], on_conflict="country,period_label,snapshot_date")
-    return data
+    parser.add_argument(
+        "--max-pages",
+        type=int,
+        default=None,
+        help="Plafond de pages par entrepôt (défaut : MAX_PAGES_PER_WAREHOUSE=%d, adapté à la "
+        "fenêtre courte — à relever explicitement avec --since pour couvrir un an d'historique, "
+        "ex. --max-pages 1000)." % MAX_PAGES_PER_WAREHOUSE,
+    )
+    return parser.parse_args()
 
 
 def main() -> None:
-    window_start = datetime.now(timezone.utc) - timedelta(days=DEFAULT_ROLLING_WINDOW_DAYS)
+    args = parse_args()
+    is_backfill = args.since is not None
+
+    if is_backfill:
+        window_start = datetime.fromisoformat(args.since).replace(tzinfo=timezone.utc)
+        max_pages = args.max_pages or 1000
+        print(
+            f"[BACKFILL] Rattrapage historique ponctuel depuis {args.since} "
+            f"(max_pages={max_pages}/entrepôt) — NE PAS planifier ce mode toutes les 5 min, "
+            f"réservé à un lancement manuel occasionnel."
+        )
+    else:
+        window_start = datetime.now(timezone.utc) - timedelta(days=DEFAULT_ROLLING_WINDOW_DAYS)
+        max_pages = args.max_pages or MAX_PAGES_PER_WAREHOUSE
 
     try:
         token = shipsen_login()
@@ -309,31 +254,20 @@ def main() -> None:
 
     for wh in WAREHOUSES:
         try:
-            n = sync_leads(wh, token, window_start)
+            n = sync_leads(wh, token, window_start, max_pages)
             total_leads += n
-            print(f"[OK] {wh['country']}: {n} leads (fenêtre {DEFAULT_ROLLING_WINDOW_DAYS}j)")
+            print(f"[OK] {wh['country']}: {n} leads (depuis {window_start.date()})")
         except Exception as err:  # noqa: BLE001 — une erreur sur un pays ne doit pas arrêter les autres
             had_error = True
             print(f"[ERROR] {wh['country']} (leads): {err}", file=sys.stderr)
 
         try:
-            n = sync_shippings(wh, token, window_start)
+            n = sync_shippings(wh, token, window_start, max_pages)
             total_shippings += n
-            print(f"[OK] {wh['country']}: {n} shippings (fenêtre {DEFAULT_ROLLING_WINDOW_DAYS}j)")
+            print(f"[OK] {wh['country']}: {n} shippings (depuis {window_start.date()})")
         except Exception as err:  # noqa: BLE001
             had_error = True
             print(f"[ERROR] {wh['country']} (shippings): {err}", file=sys.stderr)
-
-        try:
-            data = sync_analytics_snapshot(wh, token)
-            print(
-                f"[OK] {wh['country']}: analytics this_month — "
-                f"confirmés {data['confirmed_orders']}/{data['total_orders']} ({data['confirmation_rate']}%), "
-                f"livrés {data['processed']+data['paid']+data['received']}/{data['total_shippings']} ({data['delivery_rate']}%)"
-            )
-        except Exception as err:  # noqa: BLE001
-            had_error = True
-            print(f"[ERROR] {wh['country']} (analytics): {err}", file=sys.stderr)
 
     print(f"[SUMMARY] leads={total_leads} shippings={total_shippings} finished_at={datetime.now(timezone.utc).isoformat()}")
     sys.exit(1 if had_error else 0)

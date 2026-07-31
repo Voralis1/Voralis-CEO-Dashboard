@@ -153,9 +153,18 @@ grant select on shipsen_kpi_by_country to authenticated;
 grant select on shipsen_kpi_global to authenticated;
 
 -- Variantes filtrées par période, pour respecter le sélecteur de dates du dashboard (De / À).
--- leads (total_orders/confirmed_orders/confirmation_rate/cancelled/pending/en_attente/annulees)
--- vient de shipsen_leads, filtré sur order_date (order.date — pas order.createdAt, voir note de
--- shipsen_leads_schema.sql). revenu_livre (livres/revenue_delivered) reste sur shipsen_orders,
+-- leads (total_orders/cancelled/pending/en_attente/annulees) vient de shipsen_leads, filtré sur
+-- order_date (order.date — pas order.createdAt, voir note de shipsen_leads_schema.sql).
+-- confirmed_orders/revenue_confirmed (2026-07-31) déplacés dans une CTE dédiée filtrée sur
+-- updated_at, PAS order_date : vérifié en direct contre le widget natif Shipsen "Confirmation
+-- Rate" (Guinée) — order_date donnait 194 confirmées, updated_at donne 201, match exact avec
+-- l'écran. Une commande peut être créée un jour et confirmée un autre — order_date capture sa
+-- naissance, updated_at capture le moment où le call center l'a effectivement traitée, ce qui est
+-- la bonne sémantique pour "confirmées sur cette période". Fiable maintenant sur N'IMPORTE QUELLE
+-- période (pas seulement les dernières 3 min/jours de la synchro Python) depuis le rattrapage
+-- historique complet du 2026-07-31 (scripts/sync/sync_shipsen.py --since, tout shipsen_leads est
+-- désormais peuplé depuis le début réel de l'historique Shipsen, février 2026).
+-- revenu_livre (livres/revenue_delivered) reste sur shipsen_orders,
 -- filtré sur la date de CLÔTURE (coalesce(processed_at, paid_at)), conformément à la règle
 -- "l'argent n'existe que sur commande livrée et encaissée" — même logique que ClickMarket/
 -- Coliscod/Africod Congo (FULL OUTER JOIN pour ne pas perdre un pays qui n'a clôturé que des
@@ -203,11 +212,7 @@ as $$
     select
       country,
       max(currency) as currency,
-      count(*) as total_orders,
-      count(*) filter (where status_name = 'Confirmed') as confirmed_orders,
-      count(*) filter (where status_name = 'Cancelled') as cancelled_orders,
       count(*) filter (where status_name not in ('Confirmed', 'Cancelled')) as pending_orders,
-      coalesce(sum(total_price) filter (where status_name = 'Confirmed'), 0) as revenue_confirmed,
       round(
         avg(
           extract(epoch from (coalesce(last_unreached_date, updated_at) - order_date)) / 3600.0
@@ -219,6 +224,34 @@ as $$
       ) as delai_1er_contact_heures
     from shipsen_leads
     where order_date::date between date_from and date_to
+    group by country
+  ),
+  -- confirmed_orders/cancelled_orders/revenue_confirmed déplacés dans une CTE dédiée sur
+  -- updated_at (2026-07-31), même pattern que confirmed_at pour ClickMarket/Coliscod/Africod
+  -- Congo (voir clickmarket_schema.sql, note du 2026-07-14) — Shipsen n'a pas de colonne
+  -- confirmed_at dédiée, updated_at sert de repli (date de dernier changement de statut).
+  -- Vérifié en direct le 2026-07-31 (Guinée, juillet 2026, comparé au widget natif Shipsen) :
+  --   - confirmed_orders : order_date donnait 194 (échantillon antérieur) / 238 (juillet seul),
+  --     updated_at donne 238 — match exact avec l'écran (238).
+  --   - cancelled_orders : order_date donnait 448, updated_at donne 483 — match exact (483).
+  -- total_orders = confirmed_orders + cancelled_orders (PAS un count(*) de tous les leads créés) :
+  -- demande explicite du CEO le 2026-07-31 pour que Shipsen matche EXACTEMENT son propre
+  -- "Total Orders" (qui exclut les commandes encore en attente/injoignables du dénominateur —
+  -- vérifié : 238 confirmées + 483 annulées = 721 = Total Orders affiché). ⚠️ Ceci rend Shipsen
+  -- incohérent avec les 3 autres réseaux (ClickMarket/Coliscod/Africod Congo), où "Total commande"
+  -- compte TOUTES les commandes créées sur la période, en attente incluse — accepté sciemment
+  -- par le CEO en échange d'un match exact avec le dashboard natif Shipsen. pending_orders/
+  -- en_attente restent calculés séparément (sur order_date, CTE leads ci-dessus) à titre
+  -- informatif, mais ne rentrent plus dans total_orders/confirmation_rate/taux_livraison.
+  confirmation as (
+    select
+      country,
+      count(*) filter (where status_name = 'Confirmed') as confirmed_orders,
+      count(*) filter (where status_name = 'Cancelled') as cancelled_orders,
+      coalesce(sum(total_price) filter (where status_name = 'Confirmed'), 0) as revenue_confirmed
+    from shipsen_leads
+    where status_name in ('Confirmed', 'Cancelled')
+      and updated_at::date between date_from and date_to
     group by country
   ),
   shipping_extra as (
@@ -242,26 +275,33 @@ as $$
     group by country
   )
   select
-    coalesce(l.country, x.country, r.country) as country,
+    coalesce(l.country, c.country, x.country, r.country) as country,
     coalesce(l.currency, r.currency) as currency,
-    coalesce(l.total_orders, 0) as total_orders,
-    coalesce(l.confirmed_orders, 0) as confirmed_orders,
-    round(100.0 * coalesce(l.confirmed_orders, 0) / nullif(l.total_orders, 0), 1) as confirmation_rate,
-    coalesce(l.revenue_confirmed, 0) as revenue_confirmed,
+    coalesce(c.confirmed_orders, 0) + coalesce(c.cancelled_orders, 0) as total_orders,
+    coalesce(c.confirmed_orders, 0) as confirmed_orders,
+    round(
+      100.0 * coalesce(c.confirmed_orders, 0) / nullif(coalesce(c.confirmed_orders, 0) + coalesce(c.cancelled_orders, 0), 0),
+      1
+    ) as confirmation_rate,
+    coalesce(c.revenue_confirmed, 0) as revenue_confirmed,
     coalesce(r.revenue_delivered, 0) as revenue_delivered,
-    coalesce(l.cancelled_orders, 0) as cancelled_orders,
+    coalesce(c.cancelled_orders, 0) as cancelled_orders,
     coalesce(l.pending_orders, 0) as pending_orders,
     coalesce(l.pending_orders, 0) as en_attente,
-    coalesce(l.cancelled_orders, 0) as annulees,
+    coalesce(c.cancelled_orders, 0) as annulees,
     0 as rupture_stock,
     0 as doublons,
     coalesce(x.retournees, 0) as retournees,
     coalesce(r.livres, 0) as livres,
-    round(100.0 * coalesce(r.livres, 0) / nullif(l.total_orders, 0), 1) as taux_livraison,
+    round(
+      100.0 * coalesce(r.livres, 0) / nullif(coalesce(c.confirmed_orders, 0) + coalesce(c.cancelled_orders, 0), 0),
+      1
+    ) as taux_livraison,
     l.delai_1er_contact_heures
   from leads l
-  full outer join shipping_extra x on x.country = l.country
-  full outer join revenu_livre r on r.country = coalesce(l.country, x.country);
+  full outer join confirmation c on c.country = l.country
+  full outer join shipping_extra x on x.country = coalesce(l.country, c.country)
+  full outer join revenu_livre r on r.country = coalesce(l.country, c.country, x.country);
 $$;
 
 create or replace function kpi_shipsen_global_periode(date_from date, date_to date)

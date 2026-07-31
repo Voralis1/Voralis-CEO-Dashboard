@@ -3,16 +3,21 @@ import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Topbar from "@/components/layout/Topbar";
 import ProviderKpiTable from "@/components/kpi/ProviderKpiTable";
-import ShipsenAnalyticsSnapshotSection from "@/components/kpi/ShipsenAnalyticsSnapshot";
 import FieldCashAngolaSection from "@/components/fieldcash/FieldCashAngolaSection";
 import { COUNTRY_FLAGS } from "@/lib/countries";
 import { fetchPublicMarketSettings } from "@/lib/marketSettings";
 import { PROVIDERS, type ProviderId } from "@/lib/providerKpi";
 
-type NetworkFilter = ProviderId | "field-cash-angola" | "all";
+type NetworkTab = ProviderId | "field-cash-angola";
 
-const NETWORK_OPTIONS: { value: NetworkFilter; label: string }[] = [
-  { value: "all", label: "Tous les réseaux" },
+// Un onglet par réseau (2026-07-31, demande CEO) — auparavant tous les réseaux pouvaient
+// s'afficher empilés en même temps ("Tous les réseaux"), ce qui a directement causé une
+// confusion réelle : plusieurs tableaux avec des logiques de date différentes (le sélecteur De/À
+// du dashboard CEO pour ProviderKpiTable, vs une période fixe "This Month" pour
+// ShipsenAnalyticsSnapshotSection) juxtaposés à l'écran, facilement pris l'un pour l'autre. Un
+// seul réseau affiché à la fois élimine ce risque de concordance de filtres par construction —
+// plus d'option "Tous les réseaux".
+const TAB_OPTIONS: { value: NetworkTab; label: string }[] = [
   ...(Object.values(PROVIDERS).map((p) => ({ value: p.id, label: p.label })) as { value: ProviderId; label: string }[]),
   { value: "field-cash-angola", label: "Field Cash Angola" },
 ];
@@ -21,8 +26,8 @@ function isProviderId(value: string): value is ProviderId {
   return value in PROVIDERS;
 }
 
-function isNetworkFilter(value: string): value is NetworkFilter {
-  return value === "all" || value === "field-cash-angola" || isProviderId(value);
+function isNetworkTab(value: string): value is NetworkTab {
+  return value === "field-cash-angola" || isProviderId(value);
 }
 
 function LogisticsCodContent() {
@@ -31,8 +36,8 @@ function LogisticsCodContent() {
 
   const [countryOptions, setCountryOptions] = useState<string[]>([]);
   const [selectedCountry, setSelectedCountry] = useState<string | "all">("all");
-  const [selectedNetwork, setSelectedNetwork] = useState<NetworkFilter>(
-    initialReseau && isNetworkFilter(initialReseau) ? initialReseau : "all"
+  const [activeTab, setActiveTab] = useState<NetworkTab>(
+    initialReseau && isNetworkTab(initialReseau) ? initialReseau : TAB_OPTIONS[0].value
   );
 
   useEffect(() => {
@@ -52,30 +57,22 @@ function LogisticsCodContent() {
     };
   }, []);
 
-  const networksToShow: ProviderId[] =
-    selectedNetwork === "all"
-      ? (Object.keys(PROVIDERS) as ProviderId[])
-      : isProviderId(selectedNetwork)
-        ? [selectedNetwork]
-        : [];
   const countryFilter = selectedCountry === "all" ? undefined : selectedCountry;
 
   // Field Cash Angola est un delivery_model interne distinct des 4 réseaux externes (pas de
-  // ProviderKpiRow, pas de sync n8n) — affiché quand "Tous les réseaux" ou "Field Cash Angola"
-  // est sélectionné, et seulement si le filtre Pays n'exclut pas l'Angola.
-  const showFieldCashAngola =
-    (selectedNetwork === "all" || selectedNetwork === "field-cash-angola") &&
-    (selectedCountry === "all" || selectedCountry === "Angola");
+  // ProviderKpiRow, pas de sync n8n) — pertinent uniquement si le filtre Pays n'exclut pas
+  // l'Angola.
+  const fieldCashAngolaHidden = activeTab === "field-cash-angola" && selectedCountry !== "all" && selectedCountry !== "Angola";
 
   return (
     <div>
       <Topbar
         title="Réseaux Logistiques / COD"
-        subtitle="ClickMarket, Coliscod Angola, Africod Congo, Shipsen — un tableau standard par réseau"
+        subtitle="ClickMarket, Coliscod Angola, Africod Congo, Shipsen — un onglet par réseau"
       />
 
       <div className="px-6 py-5 space-y-5">
-        {/* Filtres Pays / Réseau */}
+        {/* Filtre Pays (transversal à tous les onglets) */}
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 bg-slate-50 rounded-lg p-2">
             <label className="text-xs text-slate-500 pl-1">Pays</label>
@@ -92,34 +89,38 @@ function LogisticsCodContent() {
               ))}
             </select>
           </div>
-
-          <div className="flex items-center gap-2 bg-slate-50 rounded-lg p-2">
-            <label className="text-xs text-slate-500 pl-1">Réseau</label>
-            <select
-              value={selectedNetwork}
-              onChange={(e) => setSelectedNetwork(e.target.value as NetworkFilter)}
-              className="px-2 py-1.5 text-xs bg-white text-slate-900 border border-slate-300 rounded-md focus:outline-none focus:border-emerald-500 transition-colors"
-            >
-              {NETWORK_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
         </div>
 
-        {/* Un tableau standard par réseau (composant du Prompt 2, réutilisé tel quel) */}
-        <div className="space-y-8">
-          {networksToShow.map((id) => (
-            <div key={id} className="space-y-5">
-              <ProviderKpiTable provider={id} countryFilter={countryFilter} />
-              {id === "shipsen" && <ShipsenAnalyticsSnapshotSection countryFilter={countryFilter} />}
-            </div>
+        {/* Mini onglets — un réseau à la fois */}
+        <div className="flex flex-wrap gap-1.5 border-b border-slate-200 pb-0">
+          {TAB_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => setActiveTab(opt.value)}
+              className={
+                "px-3.5 py-2 text-xs font-medium rounded-t-lg border-b-2 transition-colors " +
+                (activeTab === opt.value
+                  ? "border-emerald-500 text-emerald-700 bg-emerald-50"
+                  : "border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50")
+              }
+            >
+              {opt.label}
+            </button>
           ))}
         </div>
 
-        {showFieldCashAngola && <FieldCashAngolaSection />}
+        {/* Contenu du réseau actif uniquement */}
+        <div className="space-y-5">
+          {activeTab === "field-cash-angola" ? (
+            fieldCashAngolaHidden ? (
+              <p className="text-sm text-slate-500">Field Cash Angola ne concerne que l&apos;Angola — change le filtre Pays pour l&apos;afficher.</p>
+            ) : (
+              <FieldCashAngolaSection />
+            )
+          ) : (
+            <ProviderKpiTable provider={activeTab} countryFilter={countryFilter} />
+          )}
+        </div>
       </div>
     </div>
   );
