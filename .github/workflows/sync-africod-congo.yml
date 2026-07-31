@@ -1,0 +1,30 @@
+name: Sync Africod Congo → Supabase
+
+# Remplace n8n/africod-congo-sync.workflow.json (2026-07-31) — même modèle que sync-shipsen.yml.
+# Cadence réelle de 5 min pilotée par pg_cron/pg_net (workflow_dispatch) — voir sync-shipsen.yml.
+on:
+  schedule:
+    - cron: "15 * * * *" # décalé pour étaler la charge par rapport aux autres réseaux
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: pip install -r scripts/sync/requirements.txt
+
+      - name: Lancer la synchro Africod Congo
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          AFRICOD_CONGO_EMAIL: ${{ secrets.AFRICOD_CONGO_EMAIL }}
+          AFRICOD_CONGO_PASSWORD: ${{ secrets.AFRICOD_CONGO_PASSWORD }}
+        run: python scripts/sync/sync_africod_congo.py
