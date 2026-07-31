@@ -63,24 +63,47 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Synchro ClickMarket → Supabase. Sans argument : fenêtre glissante courte, "
         "sûre pour tourner toutes les 3-5 min. Avec --since : rattrapage historique PONCTUEL, "
-        "à lancer manuellement une fois."
+        "à lancer manuellement une fois. Avec --full-rescan : rescan périodique de tout "
+        "l'historique (voir avertissement ci-dessous)."
     )
     parser.add_argument("--since", type=str, default=None, help="AAAA-MM-JJ — rattrapage historique ponctuel.")
     parser.add_argument("--max-pages", type=int, default=None, help="Plafond de pages par pays.")
+    parser.add_argument(
+        "--full-rescan",
+        action="store_true",
+        help="Rescan complet sans arrêt anticipé (voir avertissement 2026-07-31 dans "
+        "africacod_common.py) : l'API /orders-paginated trie par order_date (date de création), "
+        "jamais par updated_at — une commande créée il y a des semaines dont le statut change "
+        "aujourd'hui n'est JAMAIS revue par la synchro rapide (fenêtre glissante de "
+        "%d jours). À planifier à basse fréquence (ex. toutes les 3h) en plus de la synchro "
+        "rapide, pour rafraîchir le statut de tout l'historique." % DEFAULT_ROLLING_WINDOW_DAYS,
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     is_backfill = args.since is not None
-    window_start = args.since or (datetime.now(timezone.utc) - timedelta(days=DEFAULT_ROLLING_WINDOW_DAYS)).date().isoformat()
-    max_pages = args.max_pages or (1000 if is_backfill else MAX_PAGES_PER_WAREHOUSE)
+    disable_early_stop = is_backfill or args.full_rescan
+    if args.since:
+        window_start = args.since
+    elif args.full_rescan:
+        window_start = "2000-01-01"  # sans effet sur le filtrage (voir africacod_common.py), juste pour les logs
+    else:
+        window_start = (datetime.now(timezone.utc) - timedelta(days=DEFAULT_ROLLING_WINDOW_DAYS)).date().isoformat()
+    max_pages = args.max_pages or (1000 if (is_backfill or args.full_rescan) else MAX_PAGES_PER_WAREHOUSE)
 
     if is_backfill:
         print(f"[BACKFILL] Rattrapage historique ponctuel depuis {window_start} (max_pages={max_pages}/pays).")
+    elif args.full_rescan:
+        print(f"[RESCAN] Rescan complet de l'historique (max_pages={max_pages}/pays) — rafraîchit les statuts figés.")
 
     email = require_env("CLICKMARKET_EMAIL")
     password = require_env("CLICKMARKET_PASSWORD")
+
+    def relogin() -> str:
+        new_token, _ = af_login(BASE_URL, email, password)
+        return new_token
 
     try:
         token, countries = af_login(BASE_URL, email, password)
@@ -105,7 +128,8 @@ def main() -> None:
                 window_start=window_start,
                 max_pages=max_pages,
                 map_row=map_row,
-                disable_early_stop=is_backfill,
+                disable_early_stop=disable_early_stop,
+                relogin=relogin,
                 upsert_fn=supabase_upsert,
             )
             total += n

@@ -62,20 +62,24 @@ def fetch_orders_page(
     user_agent: str | None,
     origin: str | None,
     cloudflare_retry: bool,
-) -> dict:
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-        "X-Selected-Country": json.dumps(country),
-    }
-    if user_agent:
-        headers["User-Agent"] = user_agent
-    if origin:
-        headers["Origin"] = origin
-        headers["Referer"] = f"{origin}/"
-
+    relogin: Callable[[], str] | None = None,
+) -> tuple[dict, str]:
+    """Retourne (data, token) — le token peut changer si une reconnexion a eu lieu (401 en cours
+    de scan, voir relogin ci-dessous)."""
     attempt = 0
+    relogin_attempts = 0
     while True:
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "X-Selected-Country": json.dumps(country),
+        }
+        if user_agent:
+            headers["User-Agent"] = user_agent
+        if origin:
+            headers["Origin"] = origin
+            headers["Referer"] = f"{origin}/"
+
         res = requests.get(
             f"{base_url}/orders-paginated",
             params={"per_page": PER_PAGE, "page": page, "orders_type": "leads"},
@@ -93,9 +97,21 @@ def fetch_orders_page(
                 )
             time.sleep(1.5 * attempt)
             continue
+        # 401 en cours de scan (2026-07-31, incident réel constaté sur Coliscod : le token expire/
+        # est invalidé bien avant la fin d'un rescan complet de ~200 pages) : reconnexion et reprise
+        # de la MÊME page avec le nouveau token, jusqu'à 2 fois — pas un simple retry, le token est
+        # définitivement mort, retenter avec le même ne sert à rien.
+        if res.status_code == 401 and relogin is not None:
+            relogin_attempts += 1
+            if relogin_attempts > 2:
+                raise RuntimeError(
+                    f"GET /orders-paginated (page {page}) → HTTP 401 persistant après reconnexion: {res.text[:500]}"
+                )
+            token = relogin()
+            continue
         if not res.ok:
             raise RuntimeError(f"GET /orders-paginated (page {page}) → HTTP {res.status_code}: {res.text[:500]}")
-        return res.json()
+        return res.json(), token
 
 
 def fetch_orders_window(
@@ -109,6 +125,7 @@ def fetch_orders_window(
     cloudflare_retry: bool = False,
     page_delay: float = 0.0,
     disable_early_stop: bool = False,
+    relogin: Callable[[], str] | None = None,
 ) -> list[dict]:
     """Pagine avec arrêt anticipé (tri newest-first, vérifié en direct le 2026-07-31 pour
     ClickMarket/Coliscod, le 2026-07-14 pour Africod Congo) : dès qu'une page entière est
@@ -133,7 +150,7 @@ def fetch_orders_window(
     last_page = 1
 
     while page <= last_page and page <= max_pages:
-        data = fetch_orders_page(base_url, token, country, page, user_agent, origin, cloudflare_retry)
+        data, token = fetch_orders_page(base_url, token, country, page, user_agent, origin, cloudflare_retry, relogin)
         pagination = data.get("pagination") or {}
         last_page = pagination.get("last_page") or 1
         orders = data.get("orders") or []
@@ -172,11 +189,15 @@ def sync_country(
     cloudflare_retry: bool = False,
     page_delay: float = 0.0,
     disable_early_stop: bool = False,
+    relogin: Callable[[], str] | None = None,
     upsert_fn: Callable[[str, list[dict]], None] = None,  # injecté par l'appelant (supabase_upsert)
 ) -> int:
     """Récupère + mappe + upsert les commandes d'un pays. map_row(order, country) -> row|None
     (None pour ignorer une commande hors fenêtre ou incomplète) — spécifique à chaque réseau,
-    voir sync_clickmarket.py / sync_coliscod.py / sync_africod_congo.py."""
+    voir sync_clickmarket.py / sync_coliscod.py / sync_africod_congo.py. relogin (optionnel) :
+    callback sans argument qui refait un login et renvoie un nouveau token, utilisé si l'API
+    répond 401 en cours de scan (voir fetch_orders_page) — indispensable pour --full-rescan, dont
+    la durée dépasse la durée de vie du token (incident réel constaté sur Coliscod le 2026-07-31)."""
     raw_orders = fetch_orders_window(
         base_url,
         token,
@@ -188,6 +209,7 @@ def sync_country(
         cloudflare_retry,
         page_delay,
         disable_early_stop,
+        relogin,
     )
     rows = []
     for o in raw_orders:

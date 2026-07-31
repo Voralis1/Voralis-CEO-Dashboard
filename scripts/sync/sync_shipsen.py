@@ -66,13 +66,26 @@ def shipsen_login() -> str:
 
 
 def fetch_paginated(
-    path: str, warehouse: str, token: str, window_start: datetime, max_pages: int = MAX_PAGES_PER_WAREHOUSE
+    path: str,
+    warehouse: str,
+    token: str,
+    window_start: datetime,
+    max_pages: int = MAX_PAGES_PER_WAREHOUSE,
+    disable_early_stop: bool = False,
 ) -> list[dict]:
     """Pagine tant qu'une page contient au moins une ligne dans la fenêtre — s'arrête tôt si une
     page entière est plus ancienne que window_start (suppose un tri newest-first, voir avertissement
     en tête de fichier), plafonné par max_pages dans tous les cas (par défaut MAX_PAGES_PER_
     WAREHOUSE — la synchro planifiée régulière ne doit JAMAIS dépasser ce plafond bas ; seul le
-    rattrapage historique ponctuel (main(), option --since) le relève explicitement)."""
+    rattrapage historique ponctuel et le rescan périodique (main(), options --since/--full-rescan)
+    le relèvent explicitement).
+
+    disable_early_stop (2026-07-31, même correctif que africacod_common.py après l'incident
+    Africod Congo) : /orders/search et /shippings/search trient par date de COMMANDE, pas de mise
+    à jour — une commande ancienne dont le statut change aujourd'hui reste à sa position d'origine
+    dans le tri, jamais remontée en page 1. La synchro rapide (fenêtre glissante courte) ne la
+    revoit donc jamais une fois sortie de la fenêtre. --full-rescan désactive l'arrêt anticipé pour
+    revoir tout l'historique et rafraîchir les statuts figés."""
     all_results: list[dict] = []
     page = 1
     last_page = 1
@@ -99,7 +112,7 @@ def fetch_paginated(
         # sous o.order pour /shippings/search (voir get_reference_date).
         page_dates = [get_reference_date(o, path) for o in results]
         page_dates = [d for d in page_dates if d is not None]
-        if page_dates and max(page_dates) < window_start:
+        if page_dates and max(page_dates) < window_start and not disable_early_stop:
             break
 
         page += 1
@@ -117,8 +130,16 @@ def get_reference_date(raw: dict, path: str) -> datetime | None:
         return None
 
 
-def sync_leads(warehouse: dict, token: str, window_start: datetime, max_pages: int = MAX_PAGES_PER_WAREHOUSE) -> int:
-    raw_orders = fetch_paginated("/orders/search", warehouse["warehouse"], token, window_start, max_pages)
+def sync_leads(
+    warehouse: dict,
+    token: str,
+    window_start: datetime,
+    max_pages: int = MAX_PAGES_PER_WAREHOUSE,
+    disable_early_stop: bool = False,
+) -> int:
+    raw_orders = fetch_paginated(
+        "/orders/search", warehouse["warehouse"], token, window_start, max_pages, disable_early_stop
+    )
     rows = []
     now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -157,8 +178,16 @@ def sync_leads(warehouse: dict, token: str, window_start: datetime, max_pages: i
     return len(rows)
 
 
-def sync_shippings(warehouse: dict, token: str, window_start: datetime, max_pages: int = MAX_PAGES_PER_WAREHOUSE) -> int:
-    raw_shippings = fetch_paginated("/shippings/search", warehouse["warehouse"], token, window_start, max_pages)
+def sync_shippings(
+    warehouse: dict,
+    token: str,
+    window_start: datetime,
+    max_pages: int = MAX_PAGES_PER_WAREHOUSE,
+    disable_early_stop: bool = False,
+) -> int:
+    raw_shippings = fetch_paginated(
+        "/shippings/search", warehouse["warehouse"], token, window_start, max_pages, disable_early_stop
+    )
     rows = []
     now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -223,12 +252,23 @@ def parse_args() -> argparse.Namespace:
         "fenêtre courte — à relever explicitement avec --since pour couvrir un an d'historique, "
         "ex. --max-pages 1000)." % MAX_PAGES_PER_WAREHOUSE,
     )
+    parser.add_argument(
+        "--full-rescan",
+        action="store_true",
+        help="Rescan complet sans arrêt anticipé (voir avertissement 2026-07-31 dans "
+        "fetch_paginated) : /orders/search et /shippings/search trient par date de commande, "
+        "jamais par date de mise à jour — une commande ancienne dont le statut change aujourd'hui "
+        "n'est jamais revue par la synchro rapide (fenêtre glissante de %d jours). À planifier à "
+        "basse fréquence (ex. toutes les 3h) en plus de la synchro rapide, pour rafraîchir le "
+        "statut de tout l'historique." % DEFAULT_ROLLING_WINDOW_DAYS,
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     is_backfill = args.since is not None
+    disable_early_stop = is_backfill or args.full_rescan
 
     if is_backfill:
         window_start = datetime.fromisoformat(args.since).replace(tzinfo=timezone.utc)
@@ -238,6 +278,10 @@ def main() -> None:
             f"(max_pages={max_pages}/entrepôt) — NE PAS planifier ce mode toutes les 5 min, "
             f"réservé à un lancement manuel occasionnel."
         )
+    elif args.full_rescan:
+        window_start = datetime(2000, 1, 1, tzinfo=timezone.utc)  # assez ancien pour ne rien filtrer
+        max_pages = args.max_pages or 1000
+        print(f"[RESCAN] Rescan complet de l'historique (max_pages={max_pages}/entrepôt) — rafraîchit les statuts figés.")
     else:
         window_start = datetime.now(timezone.utc) - timedelta(days=DEFAULT_ROLLING_WINDOW_DAYS)
         max_pages = args.max_pages or MAX_PAGES_PER_WAREHOUSE
@@ -254,7 +298,7 @@ def main() -> None:
 
     for wh in WAREHOUSES:
         try:
-            n = sync_leads(wh, token, window_start, max_pages)
+            n = sync_leads(wh, token, window_start, max_pages, disable_early_stop)
             total_leads += n
             print(f"[OK] {wh['country']}: {n} leads (depuis {window_start.date()})")
         except Exception as err:  # noqa: BLE001 — une erreur sur un pays ne doit pas arrêter les autres
@@ -262,7 +306,7 @@ def main() -> None:
             print(f"[ERROR] {wh['country']} (leads): {err}", file=sys.stderr)
 
         try:
-            n = sync_shippings(wh, token, window_start, max_pages)
+            n = sync_shippings(wh, token, window_start, max_pages, disable_early_stop)
             total_shippings += n
             print(f"[OK] {wh['country']}: {n} shippings (depuis {window_start.date()})")
         except Exception as err:  # noqa: BLE001

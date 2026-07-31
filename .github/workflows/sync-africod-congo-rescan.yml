@@ -1,0 +1,35 @@
+name: Rescan complet Africod Congo → Supabase
+
+# Rafraîchit le statut de TOUT l'historique (pas seulement les commandes récentes) — voir
+# l'avertissement dans scripts/sync/africacod_common.py (2026-07-31) : /orders-paginated trie par
+# order_date (création), jamais par updated_at, donc une commande créée il y a des semaines dont
+# le statut change aujourd'hui n'est jamais revue par la synchro rapide (sync-africod-congo.yml,
+# fenêtre glissante de quelques jours). Ce rescan comble ce trou, à basse fréquence (toutes les
+# 3h, pilotées par pg_cron/pg_net via workflow_dispatch — voir sync-shipsen.yml pour le détail).
+# Historique plus volumineux que les 2 autres réseaux (~400 pages) — timeout plus large.
+on:
+  schedule:
+    - cron: "30 */6 * * *" # filet de sécurité peu fréquent seulement (schedule GitHub peu fiable)
+  workflow_dispatch: {}
+
+jobs:
+  rescan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: pip install -r scripts/sync/requirements.txt
+
+      - name: Rescan complet Africod Congo
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          AFRICOD_CONGO_EMAIL: ${{ secrets.AFRICOD_CONGO_EMAIL }}
+          AFRICOD_CONGO_PASSWORD: ${{ secrets.AFRICOD_CONGO_PASSWORD }}
+        run: python scripts/sync/sync_africod_congo.py --full-rescan

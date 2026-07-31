@@ -1,0 +1,35 @@
+name: Rescan complet Shipsen → Supabase
+
+# Rafraîchit le statut de TOUT l'historique (pas seulement les commandes récentes) — même classe
+# de bug que la famille AfricaCOD (voir avertissement 2026-07-31 dans scripts/sync/sync_shipsen.py,
+# fonction fetch_paginated) : /orders/search et /shippings/search trient par date de commande,
+# jamais par date de mise à jour, donc une commande ancienne dont le statut change aujourd'hui
+# n'est jamais revue par la synchro rapide (sync-shipsen.yml, fenêtre glissante de quelques jours).
+# Pas encore mesuré sur Shipsen (contrairement à Coliscod où l'écart a été observé et confirmé),
+# ajouté par précaution pour rester cohérent entre les 4 réseaux.
+on:
+  schedule:
+    - cron: "35 */6 * * *" # filet de sécurité peu fréquent seulement (schedule GitHub peu fiable)
+  workflow_dispatch: {}
+
+jobs:
+  rescan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: pip install -r scripts/sync/requirements.txt
+
+      - name: Rescan complet Shipsen
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SHIPSEN_EMAIL: ${{ secrets.SHIPSEN_EMAIL }}
+          SHIPSEN_PASSWORD: ${{ secrets.SHIPSEN_PASSWORD }}
+        run: python scripts/sync/sync_shipsen.py --full-rescan
