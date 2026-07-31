@@ -32,8 +32,19 @@ import { createContext, useContext, useState, ReactNode } from "react";
 
 export type DateRangePreset = "today" | "7d" | "thisMonth" | "lastMonth" | "custom";
 
+// ⚠️ 2026-07-31 : ne JAMAIS passer par .toISOString() ici. Les dates ci-dessous sont construites
+// en heure LOCALE (new Date(année, mois, jour) interprète toujours ses arguments en local) —
+// .toISOString() les convertit en UTC, ce qui fait reculer la date d'un jour dans tout fuseau en
+// avance sur UTC (WAT/UTC+1 notamment). Bug réel constaté en direct : "Mois en cours" affichait
+// 30/06 au lieu de 01/07, "Mois dernier" affichait 31/05→29/06 au lieu de 01/06→30/06 — vérifié
+// contre le dashboard Shipsen natif (confirmées/annulées ne matchaient qu'une fois la vraie plage
+// calendaire utilisée). Fix : relire les composants LOCAUX du Date (getFullYear/getMonth/
+// getDate), jamais convertir en UTC.
 function toISODate(d: Date): string {
-  return d.toISOString().split("T")[0];
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 // Bornes calculées côté client, au moment du clic — pas de recalcul impur pendant le rendu
