@@ -1,0 +1,30 @@
+name: Rescan complet MLShipAfrica → Supabase
+
+# Rafraîchit le statut de TOUT l'historique — voir sync-shiplead-rescan.yml pour l'explication
+# complète (même limite structurelle, même famille de plateforme).
+on:
+  schedule:
+    - cron: "45 */6 * * *" # filet de sécurité peu fréquent seulement (schedule GitHub peu fiable)
+  workflow_dispatch: {}
+
+jobs:
+  rescan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: pip install -r scripts/sync/requirements.txt
+
+      - name: Rescan complet MLShipAfrica
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MLSHIPAFRICA_EMAIL: ${{ secrets.MLSHIPAFRICA_EMAIL }}
+          MLSHIPAFRICA_PASSWORD: ${{ secrets.MLSHIPAFRICA_PASSWORD }}
+        run: python scripts/sync/sync_mlshipafrica.py --full-rescan

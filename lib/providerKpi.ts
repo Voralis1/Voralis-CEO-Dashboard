@@ -2,9 +2,12 @@ import {
   fetchClickMarketKpis,
   fetchColiscodKpis,
   fetchAfricodCongoKpis,
+  fetchShipLeadKpis,
+  fetchMLShipAfricaKpis,
   type ClickMarketKpiRow,
   type ColiscodKpiRow,
   type AfricodCongoKpiRow,
+  type ShipsenFamilyKpiRow,
 } from "@/lib/supabase/queries";
 import { fetchPublicMarketSettings } from "@/lib/marketSettings";
 import { getCanonicalCountry, COUNTRY_FLAGS } from "@/lib/countries";
@@ -40,7 +43,7 @@ export interface ProviderKpiRow {
   delaiPremierContactHeures: number | null;
 }
 
-export type ProviderId = "clickmarket" | "coliscod" | "africod-congo" | "shipsen";
+export type ProviderId = "clickmarket" | "coliscod" | "africod-congo" | "shipsen" | "shiplead" | "mlshipafrica";
 
 export interface ProviderConfig {
   id: ProviderId;
@@ -129,6 +132,29 @@ async function fetchShipsenRows(dateFrom: string, dateTo: string): Promise<Provi
   });
 }
 
+// ShipLead / MLShipAfrica (2026-08-03) : même forme de ligne que Shipsen (country/currency +
+// total_orders/confirmed_orders), mais lues directement via supabase.rpc comme ClickMarket/
+// Coliscod/Africod Congo — pas besoin de la route /api/shipsen/kpi (qui utilise supabaseAdmin
+// côté serveur, un choix antérieur à cette intégration ; les policies RLS `to authenticated` de
+// ces nouvelles tables sont strictement identiques à celles de ClickMarket/Coliscod, qui
+// fonctionnent déjà en appel client direct — pas de raison de reproduire ce détour ici).
+function normalizeShipsenFamilyRow(raw: ShipsenFamilyKpiRow, currencyMap: Map<string, string>): ProviderKpiRow {
+  const { name, flag, currency } = resolveCountry(raw.country, currencyMap);
+  return {
+    countryName: name,
+    flag,
+    currency,
+    totalCommandes: raw.total_orders,
+    confirmes: raw.confirmed_orders,
+    doublons: raw.doublons,
+    livres: raw.livres,
+    tauxLivraison: raw.taux_livraison,
+    caLivre: raw.revenue_delivered,
+    annulees: raw.annulees,
+    delaiPremierContactHeures: raw.delai_1er_contact_heures,
+  };
+}
+
 export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   clickmarket: {
     id: "clickmarket",
@@ -167,5 +193,27 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     id: "shipsen",
     label: "Shipsen",
     fetchRows: fetchShipsenRows,
+  },
+  shiplead: {
+    id: "shiplead",
+    label: "ShipLead",
+    fetchRows: async (dateFrom, dateTo) => {
+      const [rows, currencyMap] = await Promise.all([
+        fetchShipLeadKpis(dateFrom, dateTo),
+        marketSettingsCurrencyMap(),
+      ]);
+      return rows.map((r) => normalizeShipsenFamilyRow(r, currencyMap));
+    },
+  },
+  mlshipafrica: {
+    id: "mlshipafrica",
+    label: "MLShipAfrica",
+    fetchRows: async (dateFrom, dateTo) => {
+      const [rows, currencyMap] = await Promise.all([
+        fetchMLShipAfricaKpis(dateFrom, dateTo),
+        marketSettingsCurrencyMap(),
+      ]);
+      return rows.map((r) => normalizeShipsenFamilyRow(r, currencyMap));
+    },
   },
 };

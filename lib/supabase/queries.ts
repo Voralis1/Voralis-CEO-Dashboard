@@ -233,6 +233,58 @@ export async function fetchAfricodCongoKpis(dateFrom: string, dateTo: string) {
   return (data ?? []) as AfricodCongoKpiRow[];
 }
 
+// ShipLead / MLShipAfrica (2026-08-03) : même plateforme backend que Shipsen (voir
+// scripts/sync/shipsen_family_common.py) — forme de ligne identique à kpi_shipsen_marche_periode
+// (country/currency + total_orders/confirmed_orders, pas country_id/total_leads comme
+// ClickMarket/Coliscod/Africod Congo).
+export interface ShipsenFamilyKpiRow {
+  country: string;
+  currency: string;
+  total_orders: number;
+  confirmed_orders: number;
+  confirmation_rate: number | null;
+  revenue_confirmed: number;
+  revenue_delivered: number;
+  cancelled_orders: number;
+  pending_orders: number;
+  en_attente: number;
+  annulees: number;
+  rupture_stock: number;
+  doublons: number;
+  retournees: number;
+  livres: number;
+  taux_livraison: number | null;
+  delai_1er_contact_heures: number | null;
+}
+
+export async function fetchShipLeadKpis(dateFrom: string, dateTo: string) {
+  const { data, error } = await supabase.rpc("kpi_shiplead_marche_periode", {
+    date_from: dateFrom,
+    date_to: dateTo,
+  });
+
+  if (error) {
+    console.error("Failed to fetch ShipLead KPIs:", error.message);
+    throw error;
+  }
+
+  return (data ?? []) as ShipsenFamilyKpiRow[];
+}
+
+export async function fetchMLShipAfricaKpis(dateFrom: string, dateTo: string) {
+  const { data, error } = await supabase.rpc("kpi_mlshipafrica_marche_periode", {
+    date_from: dateFrom,
+    date_to: dateTo,
+  });
+
+  if (error) {
+    console.error("Failed to fetch MLShipAfrica KPIs:", error.message);
+    throw error;
+  }
+
+  return (data ?? []) as ShipsenFamilyKpiRow[];
+}
+
 // Stock entrant (product-shipments / expeditions) — une ligne par (shipment, produit), lues
 // telles quelles depuis les tables *_shipments / shipsen_expeditions (pas d'agrégation, page
 // Stock & Inventaire). Forme commune aux 4 réseaux — voir components/inventory/ShipmentsTable.tsx.

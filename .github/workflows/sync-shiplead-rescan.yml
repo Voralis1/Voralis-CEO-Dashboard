@@ -1,0 +1,35 @@
+name: Rescan complet ShipLead → Supabase
+
+# Rafraîchit le statut de TOUT l'historique (pas seulement les commandes récentes) — même
+# limite structurelle que la famille Shipsen/AfricaCOD (voir scripts/sync/shipsen_family_common.py
+# et africacod_common.py) : /orders/search et /shippings/search trient par date de commande,
+# jamais par date de mise à jour, donc une commande ancienne dont le statut change aujourd'hui
+# n'est jamais revue par la synchro rapide (sync-shiplead.yml, fenêtre glissante de quelques
+# jours). Pas encore mesuré sur ShipLead (compte récent, faible volume au 2026-08-03), ajouté par
+# précaution pour rester cohérent avec les autres réseaux.
+on:
+  schedule:
+    - cron: "40 */6 * * *" # filet de sécurité peu fréquent seulement (schedule GitHub peu fiable)
+  workflow_dispatch: {}
+
+jobs:
+  rescan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: pip install -r scripts/sync/requirements.txt
+
+      - name: Rescan complet ShipLead
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SHIPLEAD_EMAIL: ${{ secrets.SHIPLEAD_EMAIL }}
+          SHIPLEAD_PASSWORD: ${{ secrets.SHIPLEAD_PASSWORD }}
+        run: python scripts/sync/sync_shiplead.py --full-rescan

@@ -68,7 +68,7 @@ function LogisticsCodContent() {
     <div>
       <Topbar
         title="Réseaux Logistiques / COD"
-        subtitle="ClickMarket, Coliscod Angola, Africod Congo, Shipsen — un onglet par réseau"
+        subtitle="ClickMarket, Coliscod Angola, Africod Congo, Shipsen, ShipLead, MLShipAfrica — un onglet par réseau"
       />
 
       <div className="px-6 py-5 space-y-5">
