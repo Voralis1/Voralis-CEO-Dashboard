@@ -112,6 +112,11 @@ as $$
     where order_date::date between date_from and date_to
     group by country
   ),
+  -- Fenêtre corrigée le 2026-08-04 (même bug identifié et corrigé côté Shipsen, voir
+  -- shipsen_schema.sql pour le détail de la vérification en direct) : shipping_date, PAS
+  -- coalesce(processed_at, paid_at) — ce dernier rattachait à tort des commandes EXPÉDIÉES un
+  -- autre mois mais dont le statut avait basculé en processed/paid ce mois-ci. "received"
+  -- volontairement PAS ajouté au filtre de statut (décision CEO, même raisonnement que Shipsen).
   revenu_livre as (
     select
       country,
@@ -120,8 +125,8 @@ as $$
       coalesce(sum(total_price), 0) - 11 * count(*) as revenue_delivered
     from mlshipafrica_orders
     where status in ('processed', 'delivered', 'paid')
-      and coalesce(processed_at, paid_at) is not null
-      and coalesce(processed_at, paid_at)::date between date_from and date_to
+      and shipping_date is not null
+      and shipping_date::date between date_from and date_to
     group by country
   )
   select

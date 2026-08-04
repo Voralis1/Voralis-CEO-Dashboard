@@ -278,7 +278,7 @@ export default function AlertsPage() {
                 rules: [
                   "Taux de confirmation < 30% → critique",
                   "Taux de confirmation < 45% → avertissement",
-                  "Appliqué à Shipsen, Coliscod Angola, Africod Congo, ClickMarket",
+                  "Appliqué à ClickMarket, Coliscod Angola, Africod Congo, Shipsen, ShipLead, MLShipAfrica, Ikatchiexpress",
                 ],
               },
               {
@@ -287,7 +287,7 @@ export default function AlertsPage() {
                 rules: [
                   "Taux de livraison < 40% → critique",
                   "Taux de livraison < 55% → avertissement",
-                  "Appliqué à Shipsen, Coliscod Angola, Africod Congo, ClickMarket",
+                  "Appliqué à ClickMarket, Coliscod Angola, Africod Congo, Shipsen, ShipLead, MLShipAfrica, Ikatchiexpress",
                 ],
               },
               {

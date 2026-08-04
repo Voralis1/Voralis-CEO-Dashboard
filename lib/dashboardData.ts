@@ -3,10 +3,8 @@ import type { MetaAdsRow, NetworkKpiRow, ShipsenCountryKpi } from "@/app/api/net
 export interface NetworkOverview {
   metaAds: MetaAdsRow[];
   networks: { network: string; rows: NetworkKpiRow[] }[];
-  shipsen: {
-    byCountry: ShipsenCountryKpi[];
-    global: { total_confirmed_orders: number; total_orders_all: number; global_confirmation_rate: number | null } | null;
-  };
+  shipsenFamily: { network: string; rows: ShipsenCountryKpi[] }[];
+  shipsenGlobal: { total_confirmed_orders: number; total_orders_all: number; global_confirmation_rate: number | null } | null;
   errors: Record<string, string>;
 }
 
@@ -135,13 +133,16 @@ export function computeAlerts(overview: NetworkOverview): Alert[] {
     for (const row of net.rows) checkNetworkRow(net.network, row);
   }
 
-  for (const row of overview.shipsen.byCountry) {
+  // Familles Shipsen (Shipsen, ShipLead, MLShipAfrica, Ikatchiexpress) — même paire de seuils
+  // confirmation/livraison que checkNetworkRow ci-dessus, mais sur la forme ShipsenCountryKpi
+  // (country/confirmation_rate directement, pas country_name/taux_confirmation).
+  function checkShipsenFamilyRow(network: string, row: ShipsenCountryKpi) {
     if (row.confirmation_rate != null) {
       if (row.confirmation_rate < THRESHOLDS.confirmationCritical) {
         alerts.push({
-          id: `confirmation-Shipsen-${row.country}`,
+          id: `confirmation-${network}-${row.country}`,
           level: "critical",
-          title: `Shipsen · ${row.country} · confirmation critique`,
+          title: `${network} · ${row.country} · confirmation critique`,
           desc: `Taux de confirmation à ${row.confirmation_rate}% (< ${THRESHOLDS.confirmationCritical}%).`,
           action: "Auditer le script de confirmation",
           market: row.country,
@@ -149,9 +150,9 @@ export function computeAlerts(overview: NetworkOverview): Alert[] {
         });
       } else if (row.confirmation_rate < THRESHOLDS.confirmationWarning) {
         alerts.push({
-          id: `confirmation-Shipsen-${row.country}`,
+          id: `confirmation-${network}-${row.country}`,
           level: "warning",
-          title: `Shipsen · ${row.country} · confirmation faible`,
+          title: `${network} · ${row.country} · confirmation faible`,
           desc: `Taux de confirmation à ${row.confirmation_rate}% (< ${THRESHOLDS.confirmationWarning}%).`,
           action: "Surveiller la qualité des leads",
           market: row.country,
@@ -159,6 +160,34 @@ export function computeAlerts(overview: NetworkOverview): Alert[] {
         });
       }
     }
+
+    if (row.taux_livraison != null) {
+      if (row.taux_livraison < THRESHOLDS.deliveryCritical) {
+        alerts.push({
+          id: `livraison-${network}-${row.country}`,
+          level: "critical",
+          title: `${network} · ${row.country} · livraison critique`,
+          desc: `Taux de livraison à ${row.taux_livraison}% (< ${THRESHOLDS.deliveryCritical}%).`,
+          action: "Auditer la logistique",
+          market: row.country,
+          timestamp: now,
+        });
+      } else if (row.taux_livraison < THRESHOLDS.deliveryWarning) {
+        alerts.push({
+          id: `livraison-${network}-${row.country}`,
+          level: "warning",
+          title: `${network} · ${row.country} · livraison faible`,
+          desc: `Taux de livraison à ${row.taux_livraison}% (< ${THRESHOLDS.deliveryWarning}%).`,
+          action: "Surveiller le partenaire logistique",
+          market: row.country,
+          timestamp: now,
+        });
+      }
+    }
+  }
+
+  for (const net of overview.shipsenFamily) {
+    for (const row of net.rows) checkShipsenFamilyRow(net.network, row);
   }
 
   for (const [source, message] of Object.entries(overview.errors)) {

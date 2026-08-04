@@ -262,6 +262,14 @@ as $$
     where order_date::date between date_from and date_to
     group by country
   ),
+  -- Fenêtre corrigée le 2026-08-04 (demande CEO) : shipping_date, PAS coalesce(processed_at,
+  -- paid_at). Vérifié en direct contre le widget natif ShipSen ("Total Shippings [Last Month]") :
+  -- filtrer sur shipping_date reproduit EXACTEMENT sa répartition par statut (253 shipments,
+  -- 177 cancelled, 18 paid, 52 processed, 6 received pour la Guinée en juillet 2026) alors que
+  -- coalesce(processed_at, paid_at) comptait 130 lignes au lieu de 70 — des commandes EXPÉDIÉES
+  -- un autre mois mais dont le statut avait basculé en processed/paid ce mois-ci se retrouvaient
+  -- comptées à tort. "received" n'est volontairement PAS ajouté au filtre de statut ci-dessous
+  -- (décision CEO) : peut signifier "reçu à l'entrepôt/relais", pas confirmé remis au client final.
   revenu_livre as (
     select
       country,
@@ -270,8 +278,8 @@ as $$
       coalesce(sum(total_price), 0) - 11 * count(*) as revenue_delivered
     from shipsen_orders
     where status in ('processed', 'delivered', 'paid')
-      and coalesce(processed_at, paid_at) is not null
-      and coalesce(processed_at, paid_at)::date between date_from and date_to
+      and shipping_date is not null
+      and shipping_date::date between date_from and date_to
     group by country
   )
   select
