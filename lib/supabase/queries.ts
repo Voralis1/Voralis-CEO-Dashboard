@@ -285,6 +285,23 @@ export async function fetchMLShipAfricaKpis(dateFrom: string, dateTo: string) {
   return (data ?? []) as ShipsenFamilyKpiRow[];
 }
 
+// Ikatchiexpress (2026-08-04, plateforme AtlasSwift) : même forme de ligne country/currency que
+// Shipsen/ShipLead/MLShipAfrica malgré une architecture backend différente (un seul endpoint,
+// pas de split leads/shipments) — voir supabase/ikatchiexpress_schema.sql.
+export async function fetchIkatchiexpressKpis(dateFrom: string, dateTo: string) {
+  const { data, error } = await supabase.rpc("kpi_ikatchiexpress_marche_periode", {
+    date_from: dateFrom,
+    date_to: dateTo,
+  });
+
+  if (error) {
+    console.error("Failed to fetch Ikatchiexpress KPIs:", error.message);
+    throw error;
+  }
+
+  return (data ?? []) as ShipsenFamilyKpiRow[];
+}
+
 // Stock entrant (product-shipments / expeditions) — une ligne par (shipment, produit), lues
 // telles quelles depuis les tables *_shipments / shipsen_expeditions (pas d'agrégation, page
 // Stock & Inventaire). Forme commune aux 4 réseaux — voir components/inventory/ShipmentsTable.tsx.

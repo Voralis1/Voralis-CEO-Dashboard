@@ -1,0 +1,33 @@
+name: Rescan complet Ikatchiexpress → Supabase
+
+# Sans effet supplémentaire aujourd'hui : sync_ikatchiexpress.py n'implémente pas encore d'arrêt
+# anticipé (compte trop petit pour vérifier le tri newest-first, voir avertissement en tête du
+# script), donc la synchro rapide reparcourt déjà tout l'historique à chaque exécution. Ce
+# workflow est gardé pour la parité de structure avec les autres réseaux et deviendra utile le
+# jour où un arrêt anticipé sera ajouté (compte plus volumineux).
+on:
+  schedule:
+    - cron: "50 */6 * * *" # filet de sécurité peu fréquent seulement (schedule GitHub peu fiable)
+  workflow_dispatch: {}
+
+jobs:
+  rescan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: pip install -r scripts/sync/requirements.txt
+
+      - name: Rescan complet Ikatchiexpress
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          IKATCHIEXPRESS_EMAIL: ${{ secrets.IKATCHIEXPRESS_EMAIL }}
+          IKATCHIEXPRESS_PASSWORD: ${{ secrets.IKATCHIEXPRESS_PASSWORD }}
+        run: python scripts/sync/sync_ikatchiexpress.py --full-rescan

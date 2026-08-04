@@ -4,13 +4,29 @@ import {
   fetchAfricodCongoKpis,
   fetchShipLeadKpis,
   fetchMLShipAfricaKpis,
+  fetchIkatchiexpressKpis,
   type ClickMarketKpiRow,
   type ColiscodKpiRow,
   type AfricodCongoKpiRow,
   type ShipsenFamilyKpiRow,
 } from "@/lib/supabase/queries";
 import { fetchPublicMarketSettings } from "@/lib/marketSettings";
-import { getCanonicalCountry, COUNTRY_FLAGS } from "@/lib/countries";
+import { getCanonicalCountry, flagFromIsoAlpha2, COUNTRY_FLAGS } from "@/lib/countries";
+
+// Résolution générique du nom en français d'un code ISO alpha-2 (ex. "AR" -> "Argentine") pour
+// les marchés HORS périmètre COD (ex. ShipLead/ARGENTINA, ShipLead/CAMEROUN, 2026-08-03) — pas
+// de devise/FX associée (jamais ajoutée arbitrairement, voir getCountryCurrency), mais un nom et
+// un drapeau lisibles plutôt qu'un code brut ou 🌍 "pays inconnu".
+const isoRegionNames = typeof Intl !== "undefined" && "DisplayNames" in Intl ? new Intl.DisplayNames(["fr"], { type: "region" }) : null;
+
+function nameFromIsoAlpha2(code: string): string | null {
+  if (!/^[A-Za-z]{2}$/.test(code) || !isoRegionNames) return null;
+  try {
+    return isoRegionNames.of(code.toUpperCase()) ?? null;
+  } catch {
+    return null;
+  }
+}
 
 // Forme normalisée, strictement identique pour les 4 prestataires (ClickMarket, Coliscod
 // Angola, Africod Congo, Shipsen) — voir components/kpi/ProviderKpiTable.tsx.
@@ -43,7 +59,14 @@ export interface ProviderKpiRow {
   delaiPremierContactHeures: number | null;
 }
 
-export type ProviderId = "clickmarket" | "coliscod" | "africod-congo" | "shipsen" | "shiplead" | "mlshipafrica";
+export type ProviderId =
+  | "clickmarket"
+  | "coliscod"
+  | "africod-congo"
+  | "shipsen"
+  | "shiplead"
+  | "mlshipafrica"
+  | "ikatchiexpress";
 
 export interface ProviderConfig {
   id: ProviderId;
@@ -58,10 +81,14 @@ async function marketSettingsCurrencyMap(): Promise<Map<string, string>> {
 
 function resolveCountry(rawName: string, currencyMap: Map<string, string>): { name: string; flag: string; currency: string } {
   const canonical = getCanonicalCountry(rawName);
-  const name = canonical?.name ?? rawName;
-  const flag = canonical?.flag ?? COUNTRY_FLAGS[rawName] ?? "🌍";
+  // Hors périmètre COD (ex. ShipLead/ARGENTINA="AR", ShipLead/CAMEROUN="CM", 2026-08-03) : nom et
+  // drapeau dérivés du code ISO alpha-2 plutôt que d'afficher le code brut ou 🌍 "pays inconnu"
+  // (même principe que lib/affiliates.ts pour le CRM Voralis).
+  const name = canonical?.name ?? nameFromIsoAlpha2(rawName) ?? rawName;
+  const flag = canonical?.flag ?? COUNTRY_FLAGS[rawName] ?? flagFromIsoAlpha2(rawName) ?? "🌍";
   // Devise via market_settings uniquement — source unique de vérité (jamais une constante
   // codée en dur par réseau, c'est exactement le bug qu'on a corrigé pour ClickMarket/Gabon).
+  // Reste vide pour un marché hors périmètre (pas de FX suivi) — voulu, pas un oubli.
   const currency = currencyMap.get(name) ?? "";
   return { name, flag, currency };
 }
@@ -211,6 +238,17 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     fetchRows: async (dateFrom, dateTo) => {
       const [rows, currencyMap] = await Promise.all([
         fetchMLShipAfricaKpis(dateFrom, dateTo),
+        marketSettingsCurrencyMap(),
+      ]);
+      return rows.map((r) => normalizeShipsenFamilyRow(r, currencyMap));
+    },
+  },
+  ikatchiexpress: {
+    id: "ikatchiexpress",
+    label: "Ikatchiexpress",
+    fetchRows: async (dateFrom, dateTo) => {
+      const [rows, currencyMap] = await Promise.all([
+        fetchIkatchiexpressKpis(dateFrom, dateTo),
         marketSettingsCurrencyMap(),
       ]);
       return rows.map((r) => normalizeShipsenFamilyRow(r, currencyMap));
