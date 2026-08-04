@@ -184,6 +184,19 @@ const COD_RPCS = [
   { fn: "kpi_africod_congo_marche_periode", countryField: "country_name" },
 ] as const;
 
+// Famille Shipsen (2026-08-04) — même forme de ligne (country/total_orders/confirmed_orders/
+// livres/revenue_delivered), voir lib/providerKpi.ts/ShipsenFamilyKpiRow. ShipLead/MLShipAfrica/
+// Ikatchiexpress ajoutés ici — leur absence faisait planter le calcul de seuils pour Cameroun/
+// Argentine (ShipLead), Burkina Faso (MLShipAfrica) et Maroc (Ikatchiexpress) : aucune commande
+// livrée ni taux de confirmation/livraison réel ne remontait jamais à ce module pour ces 4 pays,
+// donc "seuils indisponibles" en permanence (AOV/L toujours null), même avec du vrai volume.
+const SHIPSEN_FAMILY_RPCS = [
+  "kpi_shipsen_marche_periode",
+  "kpi_shiplead_marche_periode",
+  "kpi_mlshipafrica_marche_periode",
+  "kpi_ikatchiexpress_marche_periode",
+] as const;
+
 interface CodAggregate {
   livres: number;
   caLivre: number;
@@ -198,10 +211,10 @@ interface CodAggregate {
 async function fetchCodAggregatesByCountry(dateFrom: string, dateTo: string): Promise<Map<string, CodAggregate>> {
   const aggregated = new Map<string, CodAggregate>();
 
-  const results = await Promise.all(
-    COD_RPCS.map((r) => supabaseAdmin.rpc(r.fn, { date_from: dateFrom, date_to: dateTo }))
-  );
-  const shipsenResult = await supabaseAdmin.rpc("kpi_shipsen_marche_periode", { date_from: dateFrom, date_to: dateTo });
+  const [results, shipsenFamilyResults] = await Promise.all([
+    Promise.all(COD_RPCS.map((r) => supabaseAdmin.rpc(r.fn, { date_from: dateFrom, date_to: dateTo }))),
+    Promise.all(SHIPSEN_FAMILY_RPCS.map((fn) => supabaseAdmin.rpc(fn, { date_from: dateFrom, date_to: dateTo }))),
+  ]);
 
   function addRow(rawCountry: string, livres: number, caLivre: number, totalLeads: number, confirmes: number) {
     const canonical = getCanonicalCountry(rawCountry);
@@ -219,8 +232,10 @@ async function fetchCodAggregatesByCountry(dateFrom: string, dateTo: string): Pr
     for (const row of rows) addRow(row.country_name, row.livres, row.ca_livre, row.total_leads, row.confirmes);
   }
 
-  const shipsenRows = (shipsenResult.data ?? []) as { country: string; livres: number; revenue_delivered: number; total_orders: number; confirmed_orders: number }[];
-  for (const row of shipsenRows) addRow(row.country, row.livres, row.revenue_delivered, row.total_orders, row.confirmed_orders);
+  for (let i = 0; i < SHIPSEN_FAMILY_RPCS.length; i++) {
+    const rows = (shipsenFamilyResults[i].data ?? []) as { country: string; livres: number; revenue_delivered: number; total_orders: number; confirmed_orders: number }[];
+    for (const row of rows) addRow(row.country, row.livres, row.revenue_delivered, row.total_orders, row.confirmed_orders);
+  }
 
   return aggregated;
 }

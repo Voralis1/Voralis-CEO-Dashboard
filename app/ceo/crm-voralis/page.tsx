@@ -4,6 +4,7 @@ import Topbar from "@/components/layout/Topbar";
 import { Section, Badge } from "@/components/ui";
 import { useFilters } from "@/lib/filters";
 import { fetchAffiliatesData, type AffiliateRow, type CountryAffiliateRow, type AffiliatesData } from "@/lib/affiliates";
+import { fmtCurrency } from "@/lib/dashboardData";
 import { AlertTriangle, Loader2, Info, ArrowUpDown } from "lucide-react";
 
 type AffiliateSortKey = "payoutPerConfirmedUsd" | "drPct" | "deliveredOrders" | "totalPayoutUsd";
@@ -121,7 +122,7 @@ export default function CrmVoralisPage() {
   if (error) {
     return (
       <div>
-        <Topbar title="CRM Voralis" subtitle="Affiliés — décision scale/stop sur livré + rentabilité" />
+        <Topbar title="Affiliés externes" subtitle="Affiliés — décision scale/stop sur livré + rentabilité" />
         <div className="px-6 py-5">
           <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm">
             <AlertTriangle size={14} />
@@ -135,7 +136,7 @@ export default function CrmVoralisPage() {
   if (loading || !data) {
     return (
       <div>
-        <Topbar title="CRM Voralis" subtitle="Affiliés — décision scale/stop sur livré + rentabilité" />
+        <Topbar title="Affiliés externes" subtitle="Affiliés — décision scale/stop sur livré + rentabilité" />
         <div className="px-6 flex items-center justify-center py-16 text-slate-400 gap-2">
           <Loader2 size={16} className="animate-spin" />
           <span className="text-sm">Chargement des données CRM Voralis…</span>
@@ -147,7 +148,7 @@ export default function CrmVoralisPage() {
   return (
     <div>
       <Topbar
-        title="CRM Voralis"
+        title="Affiliés externes"
         subtitle="Affiliés — décision scale/stop sur livré + rentabilité (le taux de confirmation reste un diagnostic funnel, jamais décisionnel)"
       />
 
@@ -224,7 +225,8 @@ export default function CrmVoralisPage() {
                   <SortableHeader label="DR%" active={countrySortKey === "drPct"} onClick={() => toggleCountrySort("drPct")} />
                   <SortableHeader label="Payout total (USD)" active={countrySortKey === "totalPayoutUsd"} onClick={() => toggleCountrySort("totalPayoutUsd")} />
                   <SortableHeader label="Coût payout / confirmée" active={countrySortKey === "payoutPerConfirmedUsd"} onClick={() => toggleCountrySort("payoutPerConfirmedUsd")} />
-                  <th className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">Rentabilité nette (USD)</th>
+                  <th className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">CA livré encaissé</th>
+                  <th className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">Marge nette</th>
                 </tr>
               </thead>
               <tbody>
@@ -255,15 +257,33 @@ export default function CrmVoralisPage() {
                           <span className="text-slate-400" title="Aucune commande confirmée sur cette période">—</span>
                         )}
                       </td>
-                      <td className="px-3 py-3">
-                        <GapCell text="CA livré encaissé non exposé par le CRM pour ce pays — rentabilité non calculable." />
+                      <td className="px-3 py-3 font-medium text-slate-900">
+                        {r.caLivrePays != null && r.currency != null ? (
+                          <span title="CA livré du pays entier, tous canaux confondus (Media Buying interne + affiliés) — pas isolable par canal, voir Rentabilité.">
+                            {fmtCurrency(r.caLivrePays, r.currency)}
+                          </span>
+                        ) : (
+                          <GapCell text="Pays hors périmètre COD (pas de market_settings) — CA livré non calculable." />
+                        )}
+                      </td>
+                      <td className="px-3 py-3 font-semibold">
+                        {r.margeNettePays != null && r.currency != null ? (
+                          <span
+                            className={r.margeNettePays >= 0 ? "text-emerald-600" : "text-red-600"}
+                            title="CA livré du pays (tous canaux) − payout total affiliés du pays. Approximation : ne soustrait pas les autres coûts (frais de livraison, ad spend, COGS) déjà pris en compte dans Rentabilité."
+                          >
+                            {fmtCurrency(r.margeNettePays, r.currency)}
+                          </span>
+                        ) : (
+                          <GapCell text="Pays hors périmètre COD (pas de market_settings) — marge non calculable." />
+                        )}
                       </td>
                     </tr>
                   );
                 })}
                 {sortedCountries.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-3 py-4 text-center text-slate-500">Aucun pays pour cette période.</td>
+                    <td colSpan={9} className="px-3 py-4 text-center text-slate-500">Aucun pays pour cette période.</td>
                   </tr>
                 )}
               </tbody>

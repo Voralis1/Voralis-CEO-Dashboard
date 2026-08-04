@@ -1,4 +1,6 @@
 import { getCanonicalCountry, flagFromIsoAlpha2 } from "@/lib/countries";
+import { aggregateCodNetworksByCountry } from "@/lib/profitability";
+import { fetchMarketSettings, type MarketSettings } from "@/lib/marketSettings";
 
 // CRM Voralis (/api/v1/reports/networks) — vérifié en direct le 2026-07-04 :
 //   - "by_country" est un bloc GLOBAL (tous affiliés confondus), pas un croisement
@@ -44,6 +46,17 @@ export interface CountryAffiliateRow {
   drPct: number | null;
   totalPayoutUsd: number;
   payoutPerConfirmedUsd: number | null;
+  // CA livré encaissé / marge nette (2026-08-04) : demande CEO, avec une limite connue — le CRM
+  // Voralis n'expose pas le CA livré par affilié/pays, et les tables des réseaux logistiques
+  // (ClickMarket/Coliscod/Africod Congo/Shipsen/...) ne distinguent pas les commandes par canal
+  // (affilié vs Media Buying interne). Décision CEO (2026-08-04) : afficher le CA livré du PAYS
+  // ENTIER, tous canaux confondus (même agrégation que /profitability, aggregateCodNetworksByCountry)
+  // — PAS un CA spécifique aux affiliés. Marge nette = ce CA livré (devise locale) − payout total
+  // affiliés du pays (converti de USD en devise locale via fx_to_usd). null si le pays est hors
+  // périmètre COD (pas de market_settings, ex. Maroc/France) — jamais un 0 fabriqué.
+  caLivrePays: number | null;
+  currency: string | null;
+  margeNettePays: number | null;
 }
 
 export interface AffiliatesData {
@@ -66,9 +79,15 @@ function computePayoutPerConfirmed(stats: RawStats): number | null {
 }
 
 export async function fetchAffiliatesData(dateFrom: string, dateTo: string): Promise<AffiliatesData> {
-  const res = await fetch(`/api/networks?dateFrom=${dateFrom}&dateTo=${dateTo}`);
+  const [res, codNetworksByCountry, marketSettingsList] = await Promise.all([
+    fetch(`/api/networks?dateFrom=${dateFrom}&dateTo=${dateTo}`),
+    aggregateCodNetworksByCountry(dateFrom, dateTo),
+    fetchMarketSettings(),
+  ]);
   const json = await res.json();
   if (!json.success) throw new Error(json.message ?? "Erreur CRM Voralis");
+
+  const marketSettingsByPays = new Map<string, MarketSettings>(marketSettingsList.map((s) => [s.pays, s]));
 
   const affiliates: AffiliateRow[] = [];
   for (const network of json.networks ?? []) {
@@ -90,6 +109,10 @@ export async function fetchAffiliatesData(dateFrom: string, dateTo: string): Pro
 
   const byCountry: CountryAffiliateRow[] = (json.by_country ?? []).map((row: { country: string; stats: RawStats }) => {
     const canonical = getCanonicalCountry(row.country);
+    const settings = canonical ? marketSettingsByPays.get(canonical.name) : undefined;
+    const caLivrePays = settings ? codNetworksByCountry.get(canonical!.name)?.caLivre ?? 0 : null;
+    const margeNettePays = caLivrePays != null && settings ? caLivrePays - row.stats.total_payout * settings.fx_to_usd : null;
+
     return {
       countryCode: row.country,
       countryName: canonical?.name ?? null,
@@ -100,6 +123,9 @@ export async function fetchAffiliatesData(dateFrom: string, dateTo: string): Pro
       drPct: computeDrPct(row.stats),
       totalPayoutUsd: row.stats.total_payout,
       payoutPerConfirmedUsd: computePayoutPerConfirmed(row.stats),
+      caLivrePays,
+      currency: settings?.devise_locale ?? null,
+      margeNettePays,
     };
   });
 

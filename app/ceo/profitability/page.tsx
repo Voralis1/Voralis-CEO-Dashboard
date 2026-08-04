@@ -8,10 +8,21 @@ import { COUNTRY_FLAGS } from "@/lib/countries";
 import { fetchProfitabilityData, type ProfitabilityData } from "@/lib/profitability";
 import { AlertTriangle, Loader2, Info } from "lucide-react";
 
-// Payout par unité (petits montants, ex. $2.50) — fmtCurrency arrondit à 0 décimale, trop
-// grossier ici ; on garde 2 décimales comme /ceo/crm-voralis.
-function fmtUsdPerUnit(value: number): string {
-  return `$${value.toLocaleString("fr-FR", { maximumFractionDigits: 2 })}`;
+// null = pas de taux USD fiable pour ce pays (hors market_settings et devise source non
+// alignée sur un pays déjà configuré, ex. Argentine — voir lib/profitability.ts). Dans ce cas
+// on retombe sur la devise locale brute plutôt que de masquer la donnée réelle.
+function toUsd(value: number, fxToUsd: number | null): number | null {
+  return fxToUsd != null ? value / fxToUsd : null;
+}
+
+function AmountCell({ valueLocal, currency, fxToUsd }: { valueLocal: number; currency: string; fxToUsd: number | null }) {
+  const usd = toUsd(valueLocal, fxToUsd);
+  if (usd != null) return <>{fmtCurrency(usd, "USD")}</>;
+  return (
+    <span title="Devise source non alignée sur un pays déjà configuré dans market_settings — pas de taux USD fiable, montant affiché dans la devise brute rapportée par le réseau.">
+      {fmtCurrency(valueLocal, currency)}
+    </span>
+  );
 }
 
 function GapCell({ missingFields }: { missingFields: string[] }) {
@@ -97,12 +108,19 @@ export default function ProfitabilityPage() {
           <Section title="Total livrées (tous canaux)">
             <p className="text-3xl font-bold text-emerald-600 mt-2">{totalLivres.toLocaleString("fr-FR")}</p>
           </Section>
-          <Section title="CA livré encaissé par pays">
+          <Section title="Marge nette par pays">
             <div className="space-y-1 mt-2">
               {data.mediaBuying.map((r) => (
                 <p key={r.countryName} className="text-sm text-slate-700">
                   <span className="mr-1">{COUNTRY_FLAGS[r.countryName] ?? "🌍"}</span>
-                  {r.countryName} : <span className="font-semibold text-slate-900">{fmtCurrency(r.caLivre, r.currency)}</span>
+                  {r.countryName} :{" "}
+                  {r.margin.margeNette != null ? (
+                    <span className={"font-semibold " + (r.margin.margeNette >= 0 ? "text-emerald-600" : "text-red-600")}>
+                      <AmountCell valueLocal={r.margin.margeNette} currency={r.currency} fxToUsd={r.fxToUsd} />
+                    </span>
+                  ) : (
+                    <GapCell missingFields={r.margin.missingFields} />
+                  )}
                 </p>
               ))}
             </div>
@@ -111,14 +129,14 @@ export default function ProfitabilityPage() {
 
         {/* ═══ MEDIA BUYING INTERNE ═══ */}
         <Section
-          title="Media Buying Interne · marge par pays"
+          title="marge par pays"
           titleRight={<Badge variant="blue">marge = revenu net livraison − ad spend − COGS (call center inclus dans les frais de livraison)</Badge>}
         >
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-slate-200">
-                  {["Pays", "Livrées", "CA livré encaissé", "Frais livraison (local)", "Ad spend (converti)", "Marge nette", "PPDO"].map(
+                  {["Pays", "Livrées", "CA livré encaissé", "Frais livraison", "Ad spend", "Marge nette", "Profit par commande livrée"].map(
                     (h) => (
                       <th key={h} className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">
                         {h}
@@ -134,15 +152,26 @@ export default function ProfitabilityPage() {
                       <div className="flex items-center gap-2 font-medium text-slate-900">
                         <span className="text-base">{COUNTRY_FLAGS[r.countryName] ?? "🌍"}</span>
                         {r.countryName}
+                        {!r.hasMarketSettings && (
+                          <span title="Pays servi par un réseau logistique mais pas encore configuré dans market_settings (nouveau marché) — marge non calculable en attendant.">
+                            <Badge variant="yellow">config manquante</Badge>
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="px-3 py-3 text-slate-700">{r.livres.toLocaleString("fr-FR")}</td>
-                    <td className="px-3 py-3 font-medium text-slate-900">{fmtCurrency(r.caLivre, r.currency)}</td>
-                    <td className="px-3 py-3 text-slate-700">
-                      {r.margin.fraisLivraisonTotal != null ? fmtCurrency(r.margin.fraisLivraisonTotal, r.currency) : "donnée manquante"}
+                    <td className="px-3 py-3 font-medium text-slate-900">
+                      <AmountCell valueLocal={r.caLivre} currency={r.currency} fxToUsd={r.fxToUsd} />
                     </td>
                     <td className="px-3 py-3 text-slate-700">
-                      {fmtCurrency(r.adSpendLocal, r.currency)}
+                      {r.margin.fraisLivraisonTotal != null ? (
+                        <AmountCell valueLocal={r.margin.fraisLivraisonTotal} currency={r.currency} fxToUsd={r.fxToUsd} />
+                      ) : (
+                        "donnée manquante"
+                      )}
+                    </td>
+                    <td className="px-3 py-3 text-slate-700">
+                      <AmountCell valueLocal={r.adSpendLocal} currency={r.currency} fxToUsd={r.fxToUsd} />
                       {!r.adSpendKnown && (
                         <span
                           title="Aucune dépense Meta Ads trouvée pour ce pays sur la période — 0 réel, pas un trou de source (Meta Ads ne cible pas forcément tous les pays COD)."
@@ -155,7 +184,7 @@ export default function ProfitabilityPage() {
                     <td className="px-3 py-3 font-semibold">
                       {r.margin.margeNette != null ? (
                         <span className={r.margin.margeNette >= 0 ? "text-emerald-600" : "text-red-600"}>
-                          {fmtCurrency(r.margin.margeNette, r.currency)}
+                          <AmountCell valueLocal={r.margin.margeNette} currency={r.currency} fxToUsd={r.fxToUsd} />
                         </span>
                       ) : (
                         <GapCell missingFields={r.margin.missingFields} />
@@ -163,7 +192,16 @@ export default function ProfitabilityPage() {
                     </td>
                     <td className="px-3 py-3">
                       {r.margin.ppdo != null ? (
-                        <span className="text-slate-900">{fmtCurrency(r.margin.ppdo, r.currency)}</span>
+                        <span className="text-slate-900">
+                          <AmountCell valueLocal={r.margin.ppdo} currency={r.currency} fxToUsd={r.fxToUsd} />
+                        </span>
+                      ) : r.margin.margeNette != null && r.livres === 0 ? (
+                        // Marge connue mais 0 commande livrée sur la période : division par zéro,
+                        // pas une donnée manquante — 0 est la vraie valeur ("aucun profit par
+                        // commande livrée" puisqu'aucune commande n'a encore été livrée), pas un trou.
+                        <span className="text-slate-500" title="0 commande livrée sur cette période — pas de donnée manquante.">
+                          {fmtCurrency(0, "USD")}
+                        </span>
                       ) : (
                         <GapCell missingFields={r.margin.missingFields} />
                       )}
@@ -173,78 +211,12 @@ export default function ProfitabilityPage() {
               </tbody>
             </table>
           </div>
-          <p className="text-xs text-slate-400 mt-3">
-            Hypothèse : les 4 réseaux COD (ClickMarket, Coliscod Angola, Africod Congo, Shipsen) sont rattachés à Media Buying
-            Interne car ce sont eux qui livrent les leads générés par Meta Ads — aucune colonne &ldquo;source d&apos;acquisition&rdquo; ne
-            distingue aujourd&apos;hui les commandes par canal dans ces tables.
-          </p>
           {data.outOfScopeAdSpend.length > 0 && (
             <p className="text-xs text-amber-600 mt-2">
               Dépense Meta Ads hors périmètre COD (pas de market_settings, donc pas de FX/marge possible) :{" "}
               {data.outOfScopeAdSpend.map((o) => `${o.country} ($${o.spendUsd.toFixed(0)})`).join(", ")}
             </p>
           )}
-        </Section>
-
-        {/* ═══ AFFILIÉS ═══ */}
-        <Section
-          title="Affiliés (CRM Voralis) · marge par réseau"
-          titleRight={<Badge variant="yellow">marge = revenu net livraison − payout − COGS (call center inclus dans les frais de livraison)</Badge>}
-        >
-          {data.affiliatesError && (
-            <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm mb-3">
-              <AlertTriangle size={14} />
-              {data.affiliatesError}
-            </div>
-          )}
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-slate-200">
-                  {["Réseau", "Commandes", "Confirmées", "Livrées", "Payout total (USD)", "Coût payout / confirmée", "CA livré encaissé", "Marge nette"].map(
-                    (h) => (
-                      <th key={h} className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">
-                        {h}
-                      </th>
-                    )
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {data.affiliates.map((r) => (
-                  <tr key={r.networkName} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                    <td className="px-3 py-3 font-medium text-slate-900">{r.networkName}</td>
-                    <td className="px-3 py-3 text-slate-500">{r.totalOrders.toLocaleString("fr-FR")}</td>
-                    <td className="px-3 py-3 font-semibold text-emerald-600">{r.confirmedOrders.toLocaleString("fr-FR")}</td>
-                    <td className="px-3 py-3 text-slate-700">{r.deliveredOrders.toLocaleString("fr-FR")}</td>
-                    <td className="px-3 py-3 text-slate-700">
-                      {r.totalPayout != null ? fmtCurrency(r.totalPayout, "USD") : <GapCell missingFields={["payout"]} />}
-                    </td>
-                    <td className="px-3 py-3 text-slate-700">
-                      {r.payoutPerConfirmedUsd != null ? (
-                        fmtUsdPerUnit(r.payoutPerConfirmedUsd)
-                      ) : (
-                        <span className="text-slate-400" title="Aucune commande confirmée sur cette période">—</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-3">
-                      <GapCell missingFields={["CA livré encaissé (non exposé par le CRM)"]} />
-                    </td>
-                    <td className="px-3 py-3">
-                      <GapCell missingFields={["CA livré", "pays/devise"]} />
-                    </td>
-                  </tr>
-                ))}
-                {data.affiliates.length === 0 && !data.affiliatesError && (
-                  <tr>
-                    <td colSpan={8} className="px-3 py-4 text-center text-slate-500">
-                      Aucun réseau affilié pour cette période.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
         </Section>
       </div>
     </div>

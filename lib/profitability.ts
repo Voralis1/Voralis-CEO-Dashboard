@@ -18,6 +18,17 @@ export interface MediaBuyingCountryRow {
   adSpendLocal: number;
   adSpendKnown: boolean; // false = pas de ligne meta_ads pour ce pays (0 par défaut, pas un trou)
   margin: MarginBreakdown;
+  // Devise locale -> USD (2026-08-04, affichage /profitability en dollars) : local / fxToUsd.
+  // Uniquement pour l'AFFICHAGE, ligne par ligne — jamais pour additionner entre pays (le calcul
+  // de marge lui-même reste en devise locale, cf. computeBaseMargin/finalizeMargin ci-dessous).
+  // null = pas de taux fiable (pays hors market_settings ET devise source non alignée sur un pays
+  // déjà configuré, ex. Argentine — voir fetchProfitabilityData).
+  fxToUsd: number | null;
+  // false = pays sans ligne market_settings (ex. Cameroun, Argentine — nouveaux réseaux
+  // logistiques 2026-08, pas encore configurés). Toujours affiché (2026-08-04, demande CEO :
+  // "afficher tous les pays présents au niveau des partenaires logistiques"), mais marge/USD
+  // possiblement incomplets — jamais masqué silencieusement comme avant (continue muet).
+  hasMarketSettings: boolean;
 }
 
 export interface OutOfScopeAdSpend {
@@ -47,22 +58,26 @@ export interface ProfitabilityData {
   affiliatesError: string | null;
 }
 
-// Agrège les 4 réseaux COD par pays canonique — réutilisé par /profitability (Media Buying
-// Interne) et /ceo (cash encaissé), pour ne pas dupliquer cette logique entre les deux écrans.
+// Agrège TOUS les réseaux logistiques par pays (nom résolu par chaque provider, canonique ou
+// non — voir lib/providerKpi.ts/resolveCountry) — réutilisé par /profitability (marge par pays)
+// et /ceo (cash encaissé), pour ne pas dupliquer cette logique entre les deux écrans. Porte
+// aussi la devise brute rapportée par le réseau (2026-08-04) : nécessaire pour afficher les pays
+// sans market_settings (ex. Cameroun, Argentine) sans deviner une devise.
 export async function aggregateCodNetworksByCountry(
   dateFrom: string,
   dateTo: string
-): Promise<Map<string, { livres: number; caLivre: number }>> {
+): Promise<Map<string, { livres: number; caLivre: number; currency: string }>> {
   const providerRowsByNetwork = await Promise.all(
     Object.keys(PROVIDERS).map((id) => PROVIDERS[id as keyof typeof PROVIDERS].fetchRows(dateFrom, dateTo))
   );
 
-  const aggregated = new Map<string, { livres: number; caLivre: number }>();
+  const aggregated = new Map<string, { livres: number; caLivre: number; currency: string }>();
   for (const rows of providerRowsByNetwork) {
     for (const row of rows) {
-      const entry = aggregated.get(row.countryName) ?? { livres: 0, caLivre: 0 };
+      const entry = aggregated.get(row.countryName) ?? { livres: 0, caLivre: 0, currency: row.currency };
       entry.livres += row.livres;
       entry.caLivre += row.caLivre;
+      if (!entry.currency && row.currency) entry.currency = row.currency;
       aggregated.set(row.countryName, entry);
     }
   }
@@ -131,10 +146,57 @@ export async function fetchProfitabilityData(dateFrom: string, dateTo: string): 
   const fieldCashRecaps = await Promise.all(internalCostCountries.map((s) => fetchFieldCashRecap(s.pays, dateFrom, dateTo)));
   const fieldCashByPays = new Map<string, FieldCashRecap>(internalCostCountries.map((s, i) => [s.pays, fieldCashRecaps[i]]));
 
+  // Devises déjà connues via market_settings, pour rattacher un pays SANS market_settings à un
+  // taux fiable quand sa devise est une vraie devise pégée partagée (ex. Cameroun/XAF = même
+  // devise réelle que Gabon/Congo, pas une approximation).
+  const fxToUsdByCurrency = new Map<string, number>();
+  for (const s of marketSettingsList) if (!fxToUsdByCurrency.has(s.devise_locale)) fxToUsdByCurrency.set(s.devise_locale, s.fx_to_usd);
+
+  // ⚠️ Allowlist explicite par PAYS, pas par devise (2026-08-04) : matcher uniquement sur la
+  // chaîne de devise brute serait dangereux — ex. ShipLead rapporte "Argentine" en XOF, qui
+  // matcherait le XOF déjà configuré (Mali/Sénégal/Côte d'Ivoire/Burkina Faso) alors que
+  // l'Argentine n'utilise PAS le franc CFA en réalité (source ShipLead visiblement mal
+  // configurée pour ce marché). Seuls les pays ci-dessous ont été vérifiés comme partageant une
+  // vraie devise réelle avec un pays déjà en market_settings.
+  const SHARED_CURRENCY_COUNTRIES: Record<string, string> = {
+    Cameroun: "XAF", // CEMAC — même devise réelle que Gabon/Congo, déjà configurés.
+  };
+
   const mediaBuying: MediaBuyingCountryRow[] = [];
-  for (const [countryName, { livres: networkLivres, caLivre: networkCaLivre }] of aggregated) {
+  for (const [countryName, { livres: networkLivres, caLivre: networkCaLivre, currency: rawCurrency }] of aggregated) {
     const settings = marketSettingsByPays.get(countryName);
-    if (!settings) continue; // pas de market_settings pour ce pays — ne devrait pas arriver (7 pays couverts)
+
+    if (!settings) {
+      // Pays servi par un réseau logistique mais sans configuration marché (2026-08-04, ex.
+      // Cameroun/Argentine via ShipLead) — affiché quand même (demande CEO explicite), avec
+      // marge non calculable (pas de delivery_model/COGS/ad spend configurés pour ce pays).
+      // Taux USD : "USD" est toujours fiable (montant déjà en dollars) ; sinon uniquement via
+      // l'allowlist ci-dessus — jamais un match par simple égalité de code devise brut.
+      const sharedCurrency = SHARED_CURRENCY_COUNTRIES[countryName];
+      const fxToUsd =
+        rawCurrency === "USD" ? 1 : sharedCurrency ? fxToUsdByCurrency.get(sharedCurrency) ?? null : null;
+      mediaBuying.push({
+        countryName,
+        currency: rawCurrency || "?",
+        livres: networkLivres,
+        caLivre: networkCaLivre,
+        adSpendLocal: 0,
+        adSpendKnown: false,
+        margin: {
+          fraisLivraisonTotal: null,
+          chargesExternesTotal: null,
+          revenuNetLivraison: null,
+          cogsTotal: null,
+          missingFields: ["configuration marché (pays pas encore ajouté à market_settings)"],
+          coutSpecifique: null,
+          margeNette: null,
+          ppdo: null,
+        },
+        fxToUsd,
+        hasMarketSettings: false,
+      });
+      continue;
+    }
 
     const adSpendUsd = adSpendByCanonicalCountry.get(countryName) ?? 0;
     const adSpendKnown = adSpendByCanonicalCountry.has(countryName);
@@ -160,6 +222,8 @@ export async function fetchProfitabilityData(dateFrom: string, dateTo: string): 
       adSpendLocal,
       adSpendKnown,
       margin,
+      fxToUsd: settings.fx_to_usd,
+      hasMarketSettings: true,
     });
   }
 

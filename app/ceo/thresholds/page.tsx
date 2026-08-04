@@ -159,7 +159,12 @@ export default function ThresholdsPage() {
                               )}
                             </span>
                           ) : (
-                            "—"
+                            // Pas de commande livrée sur la période et pas de surcharge CEO — 0
+                            // est honnête ici ("rien vendu encore"), à la différence de M/L/CPL
+                            // ci-dessous qui restent "—" (non calculables, pas de vrai zéro).
+                            <span title="Aucune commande livrée sur cette période et aucun AOV simulé saisi.">
+                              {fmtCurrency(0, r.currency)}
+                            </span>
                           )}
                         </td>
                         <td className="px-3 py-3 text-slate-700">{r.ceoDetail.M_usd != null ? fmtUsd(r.ceoDetail.M_usd) : "—"}</td>

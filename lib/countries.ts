@@ -31,6 +31,12 @@ export const CANONICAL_COUNTRIES: CanonicalCountry[] = [
   // d'être affiché en USD par défaut (cf. lib/treasury.ts, branche hors-périmètre).
   { name: "Burkina Faso", currency: "XOF", flag: "🇧🇫", aliases: ["Burkina Faso", "Burkina", "BF", "BFA"] },
   { name: "Maroc", currency: "MAD", flag: "🇲🇦", aliases: ["Maroc", "Morocco", "MA", "MAR"] },
+  // Ajoutés 2026-08-04 : apparus via ShipLead (scripts/sync/sync_shiplead.py), rejoignent
+  // market_settings (voir market_settings_add_cameroun_argentine_migration.sql). Devise Argentine
+  // = XOF, PAS la vraie devise (ARS) — décision CEO assumée pour rester cohérent avec les
+  // montants déjà stockés en XOF (voir la migration pour le détail complet de ce compromis).
+  { name: "Cameroun", currency: "XAF", flag: "🇨🇲", aliases: ["Cameroun", "Cameroon", "CM", "CMR"] },
+  { name: "Argentine", currency: "XOF", flag: "🇦🇷", aliases: ["Argentine", "Argentina", "AR", "ARG"] },
 ];
 
 const aliasToCanonical = new Map<string, CanonicalCountry>();

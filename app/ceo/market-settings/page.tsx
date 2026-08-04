@@ -4,14 +4,13 @@ import Topbar from "@/components/layout/Topbar";
 import { Section, Badge } from "@/components/ui";
 import { COUNTRY_FLAGS } from "@/lib/countries";
 import {
-  DELIVERY_FEE_USD,
   deliveryFeeLocal,
   fetchMarketSettings,
   updateMarketSettings,
   type MarketSettings,
   type MarketSettingsUpdate,
 } from "@/lib/marketSettings";
-import { AlertTriangle, Loader2, Save, Lock } from "lucide-react";
+import { AlertTriangle, Loader2, Save } from "lucide-react";
 
 // Champs pouvant être NULL ("pas encore saisi" — jamais confondu avec 0, cf. lib/margin.ts).
 type NullableField = Exclude<keyof MarketSettingsUpdate, "cogs_devise" | "fx_to_usd" | "marge_plancher_t">;
@@ -120,21 +119,6 @@ export default function MarketSettingsPage() {
             {error}
           </div>
         )}
-
-        <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs">
-          <Lock size={14} className="shrink-0 mt-0.5" />
-          <p>
-            Le pays et la devise locale sont verrouillés (mapping validé, non éditable) pour éviter tout bug de
-            devise incorrecte assignée à un pays. Les frais de livraison sont une constante globale de{" "}
-            {DELIVERY_FEE_USD} USD/commande (coût call center déjà inclus dedans — pas de champ séparé), convertie
-            automatiquement via le FX de chaque pays — non éditable individuellement. Un champ laissé{" "}
-            <strong>vide</strong> = pas encore saisi (les écrans Rentabilité et
-            Trésorerie afficheront &ldquo;donnée manquante&rdquo;) — ce n&apos;est pas la même chose qu&apos;un{" "}
-            <strong>0</strong> explicite. Exception : <strong>AOV simulé</strong> — laissé vide (cas normal), le module
-            Seuils utilise l&apos;AOV réellement observé (CA livré encaissé ÷ livrées) ; renseigné, il sert uniquement à
-            simuler &ldquo;et si l&apos;AOV était de X ?&rdquo;, sans remplacer la donnée réelle affichée ailleurs.
-          </p>
-        </div>
 
         {loading ? (
           <div className="flex items-center justify-center py-16 text-slate-400 gap-2">
