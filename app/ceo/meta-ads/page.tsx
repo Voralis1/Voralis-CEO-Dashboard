@@ -11,7 +11,7 @@ import {
   diagnoseSupabaseConnection,
 } from "@/lib/supabase/queries";
 import { fmtUSD } from "@/lib/data";
-import { COUNTRY_FLAGS } from "@/lib/countries";
+import { COUNTRY_FLAGS, flagFromIsoAlpha2 } from "@/lib/countries";
 
 interface ProcessedMetaAdsData {
   country: string;
@@ -73,7 +73,7 @@ export default function MetaAdsPage() {
           if (!aggregatedByCountry[row.country]) {
             aggregatedByCountry[row.country] = {
               country: row.country,
-              flag: COUNTRY_FLAGS[row.country] || "🌍",
+              flag: COUNTRY_FLAGS[row.country] || flagFromIsoAlpha2(row.country) || "🌍",
               clicks: 0,
               spend: 0,
               impressions: 0,

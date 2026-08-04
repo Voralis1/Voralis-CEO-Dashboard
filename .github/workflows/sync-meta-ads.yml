@@ -1,0 +1,36 @@
+name: Sync Meta Ads → Supabase
+
+# Remplace le workflow n8n Meta Ads (jamais versionné dans ce repo, jamais retrouvé stale depuis
+# le 2026-07-19 — en réalité les 6 comptes publicitaires n'avaient simplement plus de dépense
+# depuis cette date, vérifié en direct via l'API Meta, pas une panne de synchro).
+#
+# Cadence réelle pilotée par pg_cron/pg_net (workflow_dispatch), comme les autres réseaux — voir
+# sync-shipsen.yml pour le détail de pourquoi le `schedule` GitHub natif n'est qu'un filet de
+# sécurité. Pas besoin d'une cadence aussi agressive qu'un réseau logistique (5 min) : le spend
+# Meta ne varie pas en temps réel au point de justifier ça, un intervalle de 30-60 min suffit
+# largement — c'est pg_cron qui décide de la cadence réelle, pas ce fichier.
+on:
+  schedule:
+    - cron: "15 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: pip install -r scripts/sync/requirements.txt
+
+      - name: Lancer la synchro Meta Ads
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          META_ADS_TOKEN: ${{ secrets.META_ADS_TOKEN }}
+        run: python scripts/sync/sync_meta_ads.py
