@@ -278,7 +278,7 @@ export default function CrmVoralisPage() {
                       </td>
                       <td className="px-3 py-3 font-medium text-slate-900">
                         {r.caLivrePays != null && r.currency != null ? (
-                          <span title="CA livré du pays entier, tous canaux confondus (Media Buying interne + affiliés) — pas isolable par canal, voir Rentabilité.">
+                          <span title="CA livré généré spécifiquement par les affiliés de ce pays (commandes CRM Voralis livrées) — pas le CA du pays entier.">
                             {fmtCurrency(r.caLivrePays, r.currency)}
                           </span>
                         ) : (
@@ -289,7 +289,7 @@ export default function CrmVoralisPage() {
                         {r.margeNettePays != null && r.currency != null ? (
                           <span
                             className={r.margeNettePays >= 0 ? "text-emerald-600" : "text-red-600"}
-                            title="CA livré du pays (tous canaux) − payout total affiliés du pays. Approximation : ne soustrait pas les autres coûts (frais de livraison, ad spend, COGS) déjà pris en compte dans Rentabilité."
+                            title="CA livré affilié − payout total affiliés du pays. Approximation : ne soustrait pas les autres coûts (frais de livraison, COGS) déjà pris en compte dans Rentabilité."
                           >
                             {fmtCurrency(r.margeNettePays, r.currency)}
                           </span>

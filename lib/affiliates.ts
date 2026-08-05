@@ -1,6 +1,11 @@
 import { getCanonicalCountry, flagFromIsoAlpha2 } from "@/lib/countries";
-import { aggregateCodNetworksByCountry } from "@/lib/profitability";
 import { fetchMarketSettings, type MarketSettings } from "@/lib/marketSettings";
+import {
+  fetchCrmOrders,
+  buildFxByCurrency,
+  aggregateDeliveredCaByAffiliate,
+  aggregateDeliveredCaByCountry,
+} from "@/lib/crmOrders";
 
 // CRM Voralis (/api/v1/reports/networks) — vérifié en direct le 2026-07-04 :
 //   - "by_country" est un bloc GLOBAL (tous affiliés confondus), pas un croisement
@@ -35,16 +40,6 @@ interface RawStats {
   total_payout: number;
 }
 
-interface CrmOrderRow {
-  order_id: string;
-  affiliate_name: string;
-  sub_affiliate: string;
-  country: string;
-  total_price: number | null;
-  status: string;
-  delivered_at: string | null;
-}
-
 // Politique CEO (2026-08-04) : un nouveau pays avec un vrai volume de commandes doit être pris
 // en compte immédiatement, jamais bloqué en attendant une validation manuelle. Pour le nom/
 // drapeau, repli sur le code ISO (même principe que lib/providerKpi.ts, resolveCountry). Pour la
@@ -60,84 +55,6 @@ function nameFromIsoAlpha2(code: string): string | null {
   } catch {
     return null;
   }
-}
-
-function buildFxByCurrency(marketSettingsList: MarketSettings[]): Map<string, number> {
-  const map = new Map<string, number>();
-  for (const s of marketSettingsList) {
-    if (!map.has(s.devise_locale)) map.set(s.devise_locale, s.fx_to_usd);
-  }
-  return map;
-}
-
-async function fetchCrmOrders(status: string): Promise<CrmOrderRow[]> {
-  const res = await fetch(`/api/orders?status=${status}`);
-  // /api/orders peut répondre par une page d'erreur non-JSON en cas de crash serveur — .json()
-  // planterait alors avec "Unexpected token <"/"unexpected character…", opaque pour l'utilisateur.
-  const text = await res.text();
-  let json: { success?: boolean; message?: string; orders?: unknown[] };
-  try {
-    json = JSON.parse(text);
-  } catch {
-    throw new Error(`Réponse invalide de /api/orders (HTTP ${res.status}) — voir les logs serveur.`);
-  }
-  if (!json.success) throw new Error(json.message ?? "Erreur CRM Voralis (commandes)");
-  return (json.orders ?? []) as CrmOrderRow[];
-}
-
-// CA livré par (réseau, code affilié) : le total en USD est la valeur de référence (colonne
-// "Rentabilité nette (USD)"), calculé commande par commande (chaque commande convertie avec le
-// taux de SA propre devise) — jamais en sommant des montants de devises différentes entre eux.
-// Un affilié peut vendre dans plusieurs pays (vérifié en direct : 13/39 affiliés actuels sont
-// multi-pays) donc "local"/"currency" ne sont renseignés QUE si l'affilié n'a livré que dans une
-// seule devise sur la période (sinon null — le total USD reste la seule vue fiable). Si UNE SEULE
-// commande a une devise sans taux connu nulle part dans market_settings, tout le total USD de cet
-// affilié repasse à null plutôt que d'afficher un total silencieusement sous-évalué.
-// Filtré sur delivered_at tombant dans la période (pas created_at) — même règle "l'argent
-// n'existe que sur livré+encaissé" que partout ailleurs — plutôt que de faire confiance à un
-// filtre from/to côté API dont on ne connaît pas le champ de référence exact.
-function aggregateDeliveredCaByAffiliate(
-  orders: CrmOrderRow[],
-  dateFrom: string,
-  dateTo: string,
-  fxByCurrency: Map<string, number>
-): Map<string, { usd: number | null; currency: string | null; local: number | null }> {
-  const byKey = new Map<
-    string,
-    { usd: number; currencies: Set<string>; incompleteFx: boolean; localByCurrency: Map<string, number> }
-  >();
-
-  for (const o of orders) {
-    if (o.status !== "delivered" || !o.delivered_at || o.total_price == null) continue;
-    const deliveredDate = o.delivered_at.slice(0, 10);
-    if (deliveredDate < dateFrom || deliveredDate > dateTo) continue;
-
-    const canonical = getCanonicalCountry(o.country);
-    const currency = canonical?.currency;
-    if (!currency) continue; // pays totalement inconnu (ni canonique ni ISO alpha-2 exploitable) — cas extrême
-
-    const key = `${o.affiliate_name}::${o.sub_affiliate}`;
-    const entry = byKey.get(key) ?? { usd: 0, currencies: new Set<string>(), incompleteFx: false, localByCurrency: new Map<string, number>() };
-    entry.currencies.add(currency);
-    entry.localByCurrency.set(currency, (entry.localByCurrency.get(currency) ?? 0) + o.total_price);
-
-    const fx = fxByCurrency.get(currency);
-    if (fx != null) entry.usd += o.total_price / fx;
-    else entry.incompleteFx = true;
-
-    byKey.set(key, entry);
-  }
-
-  const result = new Map<string, { usd: number | null; currency: string | null; local: number | null }>();
-  for (const [key, entry] of byKey) {
-    const singleCurrency = entry.currencies.size === 1 ? [...entry.currencies][0] : null;
-    result.set(key, {
-      usd: entry.incompleteFx ? null : entry.usd,
-      currency: singleCurrency,
-      local: singleCurrency ? entry.localByCurrency.get(singleCurrency)! : null,
-    });
-  }
-  return result;
 }
 
 export interface AffiliateRow {
@@ -174,14 +91,15 @@ export interface CountryAffiliateRow {
   drPct: number | null;
   totalPayoutUsd: number;
   payoutPerConfirmedUsd: number | null;
-  // CA livré encaissé / marge nette (2026-08-04) : demande CEO, avec une limite connue — le CRM
-  // Voralis n'expose pas le CA livré par affilié/pays, et les tables des réseaux logistiques
-  // (ClickMarket/Coliscod/Africod Congo/Shipsen/...) ne distinguent pas les commandes par canal
-  // (affilié vs Media Buying interne). Décision CEO (2026-08-04) : afficher le CA livré du PAYS
-  // ENTIER, tous canaux confondus (même agrégation que /profitability, aggregateCodNetworksByCountry)
-  // — PAS un CA spécifique aux affiliés. Marge nette = ce CA livré (devise locale) − payout total
-  // affiliés du pays (converti de USD en devise locale via fx_to_usd). null si le pays est hors
-  // périmètre COD (pas de market_settings, ex. Maroc/France) — jamais un 0 fabriqué.
+  // CA livré encaissé / marge nette (2026-08-04, corrigé 2026-08-05) : CA généré SPÉCIFIQUEMENT
+  // par les affiliés de ce pays — plus le CA du pays entier (limite initiale du 2026-08-04,
+  // levée le 2026-08-05 : confirmé par le CEO que la même commande apparaît à la fois dans les
+  // tables des réseaux logistiques ET dans le CRM Voralis quand elle vient d'un affilié, donc
+  // aggregateDeliveredCaByCountry — sommée directement depuis /api/v1/reports/orders, statut
+  // "delivered" dans la période — donne bien le CA affilié isolé, pas le CA du pays entier comme
+  // avant). Marge nette = ce CA livré affilié (devise locale) − payout total affiliés du pays
+  // (converti de USD en devise locale via fx_to_usd). null si le pays est hors périmètre COD (pas
+  // de market_settings, ex. Maroc/France) — jamais un 0 fabriqué.
   caLivrePays: number | null;
   currency: string | null;
   margeNettePays: number | null;
@@ -207,9 +125,8 @@ function computePayoutPerConfirmed(stats: RawStats): number | null {
 }
 
 export async function fetchAffiliatesData(dateFrom: string, dateTo: string): Promise<AffiliatesData> {
-  const [res, codNetworksByCountry, marketSettingsList, deliveredOrders] = await Promise.all([
+  const [res, marketSettingsList, deliveredOrders] = await Promise.all([
     fetch(`/api/networks?dateFrom=${dateFrom}&dateTo=${dateTo}`),
-    aggregateCodNetworksByCountry(dateFrom, dateTo),
     fetchMarketSettings(),
     fetchCrmOrders("delivered"),
   ]);
@@ -219,6 +136,10 @@ export async function fetchAffiliatesData(dateFrom: string, dateTo: string): Pro
   const marketSettingsByPays = new Map<string, MarketSettings>(marketSettingsList.map((s) => [s.pays, s]));
   const fxByCurrency = buildFxByCurrency(marketSettingsList);
   const caByAffiliate = aggregateDeliveredCaByAffiliate(deliveredOrders, dateFrom, dateTo, fxByCurrency);
+  // CA livré PAR PAYS spécifique aux affiliés (2026-08-05, corrige la limite documentée jusqu'ici
+  // — voir CountryAffiliateRow ci-dessus) : même source que caByAffiliate, agrégée par pays au
+  // lieu de (réseau, affilié).
+  const caByCountry = aggregateDeliveredCaByCountry(deliveredOrders, dateFrom, dateTo);
 
   const affiliates: AffiliateRow[] = [];
   for (const network of json.networks ?? []) {
@@ -246,7 +167,7 @@ export async function fetchAffiliatesData(dateFrom: string, dateTo: string): Pro
   const byCountry: CountryAffiliateRow[] = (json.by_country ?? []).map((row: { country: string; stats: RawStats }) => {
     const canonical = getCanonicalCountry(row.country);
     const settings = canonical ? marketSettingsByPays.get(canonical.name) : undefined;
-    const caLivrePays = settings ? codNetworksByCountry.get(canonical!.name)?.caLivre ?? 0 : null;
+    const caLivrePays = settings ? caByCountry.get(canonical!.name)?.caLivreLocal ?? 0 : null;
     const margeNettePays = caLivrePays != null && settings ? caLivrePays - row.stats.total_payout * settings.fx_to_usd : null;
 
     return {

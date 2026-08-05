@@ -77,8 +77,9 @@ export function computeBaseMargin(
   return { fraisLivraisonTotal, chargesExternesTotal, revenuNetLivraison, cogsTotal, missingFields };
 }
 
-// coutSpecifique = payout_affilié (bloc Affiliés) ou ad_spend converti en devise locale (bloc
-// Media Buying Interne) — calculé par l'appelant car sa source diffère selon le bloc.
+// coutSpecifique = payout_affilié (bloc Affiliés), ou ad_spend + payout_affilié combinés en
+// devise locale (bloc Rentabilité par pays, 2026-08-05) — calculé par l'appelant car sa
+// composition diffère selon le bloc.
 export function finalizeMargin(
   base: BaseMargin,
   livres: number,

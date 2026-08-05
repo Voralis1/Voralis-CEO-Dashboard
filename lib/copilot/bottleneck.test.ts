@@ -42,7 +42,7 @@ function baseMarket(overrides: Partial<MarketSnapshot> = {}): MarketSnapshot {
       ruptureStock: 0,
       doublons: 2,
     },
-    mediaBuying: { adSpendUsd: 100, adSpendKnown: true },
+    mediaBuying: { adSpendUsd: 100, adSpendKnown: true, payoutAffiliesUsd: 0 },
     threshold: baseThreshold(),
     affiliatesCountry: null,
     stockProducts: [],
@@ -69,6 +69,7 @@ describe("computeBottleneckAnalysis", () => {
       mediaBuying: {
         adSpendUsd: 100,
         adSpendKnown: true,
+        payoutAffiliesUsd: 0,
         margin: {
           fraisLivraisonTotal: 1000,
           revenuNetLivraison: 5000,
@@ -98,6 +99,7 @@ describe("computeBottleneckAnalysis", () => {
       mediaBuying: {
         adSpendUsd: 900,
         adSpendKnown: true,
+        payoutAffiliesUsd: 0,
         margin: {
           fraisLivraisonTotal: 1000,
           revenuNetLivraison: 2000,
@@ -123,7 +125,7 @@ describe("computeBottleneckAnalysis", () => {
   it("falls back to the CPL/payout traffic-light proxy when margin is not exposed (team role) and flags it as an angle mort", () => {
     const market = baseMarket({
       pays: "Mali",
-      mediaBuying: { adSpendUsd: 500, adSpendKnown: true }, // no margin field at all (team)
+      mediaBuying: { adSpendUsd: 500, adSpendKnown: true, payoutAffiliesUsd: 0 }, // no margin field at all (team)
       threshold: baseThreshold({ cplColor: "red", payoutColor: null }),
     });
     const analysis = computeBottleneckAnalysis(snapshotWith([market], 30));
@@ -134,7 +136,7 @@ describe("computeBottleneckAnalysis", () => {
 
   it("returns estRentable=null (never silently profitable) when neither margin nor threshold colors are available", () => {
     const market = baseMarket({
-      mediaBuying: { adSpendUsd: 0, adSpendKnown: false },
+      mediaBuying: { adSpendUsd: 0, adSpendKnown: false, payoutAffiliesUsd: 0 },
       threshold: baseThreshold({ cplColor: null, payoutColor: null }),
     });
     const analysis = computeBottleneckAnalysis(snapshotWith([market], 30));
@@ -151,6 +153,7 @@ describe("computeBottleneckAnalysis", () => {
       mediaBuying: {
         adSpendUsd: 100,
         adSpendKnown: true,
+        payoutAffiliesUsd: 0,
         margin: {
           fraisLivraisonTotal: 500,
           revenuNetLivraison: 5000,
@@ -169,6 +172,7 @@ describe("computeBottleneckAnalysis", () => {
       mediaBuying: {
         adSpendUsd: 100,
         adSpendKnown: true,
+        payoutAffiliesUsd: 0,
         margin: {
           fraisLivraisonTotal: 500,
           revenuNetLivraison: 5000,
@@ -195,6 +199,7 @@ describe("computeBottleneckAnalysis", () => {
       mediaBuying: {
         adSpendUsd: 900,
         adSpendKnown: true,
+        payoutAffiliesUsd: 0,
         margin: {
           fraisLivraisonTotal: 500,
           revenuNetLivraison: 2000,

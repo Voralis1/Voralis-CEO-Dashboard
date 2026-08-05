@@ -4,6 +4,12 @@
 // (market_settings), jamais recodé ailleurs.
 export const DELIVERY_FEE_USD = 11;
 
+// Charge fixe AJOUTÉE au forfait livraison (2026-08-05, demande CEO) — même principe que
+// DELIVERY_FEE_USD : constante unique, convertie en devise locale via deliveryFeeLocal() ci-
+// dessous, jamais recodée ailleurs. Les deux constantes restent séparées (plutôt qu'un seul
+// "13$") pour garder le forfait brut et la charge fixe individuellement traçables/modifiables.
+export const CHARGE_FIXE_LIVRAISON_USD = 2;
+
 // conf_pct/dr_pct sont NULLABLE : NULL = pas encore saisi par le CEO ET aucune donnée observée
 // disponible (→ tout calcul de marge qui en dépend doit s'afficher "incomplet", jamais
 // silencieusement traité comme 0). Depuis 2026-07-14, ces deux champs ne servent plus que de
@@ -76,7 +82,7 @@ export type MarketSettingsUpdate = Partial<
 // /ceo) DOIVENT appeler cette même fonction avec le fx_to_usd du pays concerné, jamais recoder
 // le calcul ni en écrire une seconde implémentation.
 export function deliveryFeeLocal(fxToUsd: number): number {
-  return DELIVERY_FEE_USD * fxToUsd;
+  return (DELIVERY_FEE_USD + CHARGE_FIXE_LIVRAISON_USD) * fxToUsd;
 }
 
 // Sucre pratique pour un lookup ponctuel par pays (une seule commande, un seul écran).

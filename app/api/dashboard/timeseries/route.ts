@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getCanonicalCountry } from "@/lib/countries";
+import { DELIVERY_FEE_USD, CHARGE_FIXE_LIVRAISON_USD } from "@/lib/marketSettings";
 
 // Alimente le nouvel onglet "Tableau de bord" (courbes d'évolution + diagrammes par pays).
 // Aucune des fonctions SQL kpi_*_marche_periode existantes ne donne de granularité JOURNALIÈRE
@@ -104,8 +105,9 @@ export async function GET(request: Request) {
 
   const fxByPays = new Map<string, number>((marketSettingsRes.data ?? []).map((s) => [s.pays as string, s.fx_to_usd as number]));
 
-  // 11$/commande déduit du CA, même formule que toutes les fonctions kpi_*_marche_periode.
-  const DELIVERY_FEE_USD = 11;
+  // Frais de livraison total déduit du CA — (11$ forfait + 2$ charge fixe), même formule que
+  // deliveryFeeLocal() (lib/marketSettings.ts), source unique de vérité, jamais recodée en dur ici.
+  const TOTAL_DELIVERY_FEE_USD = DELIVERY_FEE_USD + CHARGE_FIXE_LIVRAISON_USD;
 
   const dailyByDate = new Map<string, { caLivreUsd: number; livres: number }>();
   const byCountry = new Map<string, { caLivreUsd: number; livres: number }>();
@@ -114,7 +116,7 @@ export async function GET(request: Request) {
     for (const r of rows) {
       const fx = fxByPays.get(r.country);
       if (fx == null) continue; // pays hors market_settings — pas de taux fiable, exclu (comme ailleurs dans le dashboard)
-      const caUsd = r.totalPrice / fx - DELIVERY_FEE_USD;
+      const caUsd = r.totalPrice / fx - TOTAL_DELIVERY_FEE_USD;
 
       const d = dailyByDate.get(r.day) ?? { caLivreUsd: 0, livres: 0 };
       d.caLivreUsd += caUsd;

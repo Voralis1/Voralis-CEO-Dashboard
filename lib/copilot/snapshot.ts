@@ -19,7 +19,6 @@ import type { UserRole } from "@/lib/auth/role";
 export const STRUCTURAL_BLIND_SPOTS: string[] = [
   "Délai avant le 1er contact commercial : aucune source connectée n'expose cette donnée (ni les réseaux COD, ni le CRM Voralis).",
   "Motifs d'annulation et de retour : aucun réseau ne catégorise ces motifs — seuls les comptages bruts (annulées, retournées) sont disponibles.",
-  "CA encaissé par affilié : l'API CRM Voralis n'expose qu'un DR% et un payout global par affilié, jamais un chiffre d'affaires par pays/affilié — impossible de classer une commande affiliée comme rentable ou non.",
 ];
 
 const COD_NETWORK_RPCS = [
@@ -178,6 +177,9 @@ export interface AffiliateCountryRow {
   deliveredOrders: number;
   drPct: number | null;
   payoutPerConfirmedUsd: number | null;
+  // Payout CRM Voralis total du pays (USD, jamais à reconvertir) — utilisé pour déduire le
+  // "payout affiliés" du calcul de marge par pays ci-dessous (2026-08-05, voir MarketSnapshot).
+  totalPayoutUsd: number;
 }
 
 interface CrmRawStats {
@@ -234,6 +236,7 @@ async function fetchAffiliateData(
         deliveredOrders: row.stats.delivered_orders,
         drPct: drPctOf(row.stats),
         payoutPerConfirmedUsd: payoutPerConfirmedOf(row.stats),
+        totalPayoutUsd: row.stats.total_payout ?? 0,
       };
     });
 
@@ -401,6 +404,11 @@ async function fetchCashHoldingsByCountry(): Promise<Map<string, CashHoldingRow[
 export interface MediaBuyingSnapshot {
   adSpendUsd: number;
   adSpendKnown: boolean;
+  // Payout CRM Voralis du pays (USD) — coût d'acquisition déduit en plus de l'ad spend depuis
+  // que livres/caLivre couvrent toutes les commandes du réseau, affiliés externes + media buying
+  // interne confondus (2026-08-05, voir lib/profitability.ts pour le même changement côté page
+  // Rentabilité).
+  payoutAffiliesUsd: number;
   // Présent uniquement pour le rôle CEO — retiré entièrement pour "team" (cf. ThresholdRow.ceoDetail).
   margin?: MarginBreakdown;
 }
@@ -498,14 +506,21 @@ export async function buildCopilotSnapshot(dateFrom: string, dateTo: string, rol
   const markets: MarketSnapshot[] = [];
   for (const settings of marketSettingsList) {
     const rowsForCountry = funnelRows.filter((r) => r.pays === settings.pays);
-    const networkLivres = rowsForCountry.reduce((s, r) => s + r.livres, 0);
-    const networkCaLivre = rowsForCountry.reduce((s, r) => s + r.caLivre, 0);
     const totalLeads = rowsForCountry.reduce((s, r) => s + r.totalLeads, 0);
     const confirmes = rowsForCountry.reduce((s, r) => s + r.confirmes, 0);
+
+    // Livres/CA livré = total réseau brut, TOUTES affiliations confondues (media buying interne +
+    // affiliés externes, 2026-08-05, même décision CEO que lib/profitability.ts) — plus de
+    // soustraction de la part affiliée, les deux coûts d'acquisition (ad spend + payout affiliés)
+    // sont déduits en face à la place (voir finalizeMargin ci-dessous).
+    const networkLivres = rowsForCountry.reduce((s, r) => s + r.livres, 0);
+    const networkCaLivre = rowsForCountry.reduce((s, r) => s + r.caLivre, 0);
 
     const adSpendUsd = adSpend.byCountry.get(settings.pays) ?? 0;
     const adSpendKnown = adSpend.known.has(settings.pays);
     const adSpendLocal = adSpendUsd * settings.fx_to_usd;
+    const payoutAffiliesUsd = affiliatesCountryMap.get(settings.pays)?.totalPayoutUsd ?? 0;
+    const payoutAffiliesLocal = payoutAffiliesUsd * settings.fx_to_usd;
 
     const recap = fieldCashByPays.get(settings.pays) ?? null;
     const { fraisLivraisonTotal, chargesExternesTotal } = resolveFraisLivraison(settings, networkLivres, recap);
@@ -517,7 +532,7 @@ export async function buildCopilotSnapshot(dateFrom: string, dateTo: string, rol
     const quantitySent = quantitySentByCountry.get(settings.pays) ?? 0;
     const cogsTotal = (COGS_PRODUCTION_UNIT_USD + COGS_SHIPPING_UNIT_USD) * quantitySent * settings.fx_to_usd;
     const base = computeBaseMargin(caLivre, settings, fraisLivraisonTotal, chargesExternesTotal, cogsTotal);
-    const margin = finalizeMargin(base, livres, adSpendLocal, "ad spend (Media Buying Interne)");
+    const margin = finalizeMargin(base, livres, adSpendLocal + payoutAffiliesLocal, "ad spend + payout affiliés");
 
     const thresholdRow = thresholdByCountry.get(settings.pays);
 
@@ -538,7 +553,7 @@ export async function buildCopilotSnapshot(dateFrom: string, dateTo: string, rol
         ruptureStock: rowsForCountry.reduce((s, r) => s + r.ruptureStock, 0),
         doublons: rowsForCountry.reduce((s, r) => s + r.doublons, 0),
       },
-      mediaBuying: { adSpendUsd, adSpendKnown, margin: role === "ceo" ? margin : undefined },
+      mediaBuying: { adSpendUsd, adSpendKnown, payoutAffiliesUsd, margin: role === "ceo" ? margin : undefined },
       threshold: role === "ceo" ? (thresholdRow as ThresholdRow) : (stripCeoDetail(thresholdRow ? [thresholdRow] : [])[0] as Omit<ThresholdRow, "ceoDetail">),
       affiliatesCountry: affiliatesCountryMap.get(settings.pays) ?? null,
       stockProducts: stockByCountry.get(settings.pays) ?? [],

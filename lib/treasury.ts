@@ -35,7 +35,8 @@ export interface CashOutRow {
   // la période — voir COGS_PRODUCTION_UNIT_USD/COGS_SHIPPING_UNIT_USD ci-dessus. Distinct du
   // frais logistique ci-dessous (qui lui porte sur la LIVRAISON commande→client).
   cogsLocal: number;
-  // Frais logistique commande→client : 11$/livraison (deliveryFeeLocal) pour les 6 réseaux
+  // Frais logistique commande→client : 13$/livraison (deliveryFeeLocal, 11$ + 2$ de charge
+  // fixe depuis le 2026-08-05) pour les 6 réseaux
   // externes, frais interne + charges externes (Field Cash) pour l'Angola — même calcul que
   // "Frais livraison" de Cash encaissé (resolveFraisLivraison), affiché ici comme sortie de
   // cash explicite plutôt que seulement netté contre le CA livré encaissé.

@@ -54,9 +54,10 @@ interface DeliveryModelSettings {
 }
 
 // Frais de livraison TOTAL pour un pays/période — unique point d'entrée pour margin.ts/
-// treasury.ts : external_11usd (6 pays) = comportement inchangé (deliveryFeeLocal × livrées) ;
+// treasury.ts : external_11usd (6 pays) = comportement inchangé (deliveryFeeLocal × livrées,
+// 11$ + 2$ de charge fixe = 13$/commande depuis le 2026-08-05, voir lib/marketSettings.ts) ;
 // internal_real_cost (Angola) = SOMME de deux canaux distincts (2026-07-14, demande CEO) :
-// Coliscod (réseau externe présent en Angola, forfait 11$/livraison comme les 6 autres pays,
+// Coliscod (réseau externe présent en Angola, même forfait que les 6 autres pays,
 // `livres` ici = son propre compteur, PAS combiné avec Field Cash) + Field Cash (flotte interne,
 // coût réel de sa propre livraison). Avant ce changement, seul le coût Field Cash était compté,
 // ignorant silencieusement le volume Coliscod — historiquement voulu pour ne pas mélanger deux

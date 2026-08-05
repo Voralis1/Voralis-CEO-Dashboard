@@ -5,11 +5,14 @@ import { computeBaseMargin, finalizeMargin, COGS_PRODUCTION_UNIT_USD, COGS_SHIPP
 import { fetchFieldCashRecap, resolveFraisLivraison, combineLivresCaLivre, type FieldCashRecap } from "@/lib/fieldCash";
 import { getCanonicalCountry } from "@/lib/countries";
 
-// "Media Buying Interne" = les 4 réseaux COD (ClickMarket/Coliscod/Africod Congo/Shipsen),
-// dont l'acquisition est aujourd'hui portée par Meta Ads (pas d'affiliés dans cette base).
-// Hypothèse de travail à confirmer : si un jour un réseau COD est alimenté par un canal
-// d'acquisition distinct, il faudra une colonne "source" dans les tables *_leads/*_orders
-// pour ne plus la déduire implicitement ici.
+// "Rentabilité" = toutes les commandes livrées par les 7 réseaux COD (ClickMarket/Coliscod/
+// Africod Congo/Shipsen/ShipLead/MLShipAfrica/Ikatchiexpress), TOUTES affiliations confondues
+// (media buying interne Meta Ads + affiliés externes CRM Voralis). Décision CEO (2026-08-05) :
+// vu que la même commande apparaît à la fois dans la table du réseau logistique ET dans le CRM
+// Voralis quand elle vient d'un affilié, il est inutile de les séparer — la vraie rentabilité par
+// pays se lit directement sur le total réseau (source de vérité "partenaires logistiques"), avec
+// TOUS les coûts d'acquisition déduits en face : ad spend (Meta Ads) ET payout affiliés (CRM
+// Voralis), qu'importe quel canal a effectivement apporté chaque commande.
 export interface MediaBuyingCountryRow {
   countryName: string;
   currency: string;
@@ -17,6 +20,9 @@ export interface MediaBuyingCountryRow {
   caLivre: number;
   adSpendLocal: number;
   adSpendKnown: boolean; // false = pas de ligne meta_ads pour ce pays (0 par défaut, pas un trou)
+  // Payout CRM Voralis (bloc by_country, toujours en USD) converti en devise locale via
+  // fx_to_usd — 0 si aucun affilié n'a livré sur ce pays/période (pas un trou de source).
+  payoutAffiliesLocal: number;
   margin: MarginBreakdown;
   // Devise locale -> USD (2026-08-04, affichage /profitability en dollars) : local / fxToUsd.
   // Uniquement pour l'AFFICHAGE, ligne par ligne — jamais pour additionner entre pays (le calcul
@@ -36,26 +42,10 @@ export interface OutOfScopeAdSpend {
   spendUsd: number;
 }
 
-// CRM Voralis (affiliés marketing) — le payout est désormais exact et fiable : total_payout
-// (by_country / networks) est la somme exacte des commissions en USD (project_products.payout,
-// propagée correctement dès l'ingestion côté CRM), pour toute commande ayant atteint au moins
-// le statut "confirmed" — confirmé le 2026-07-06. Seul le CA par réseau affilié reste absent de
-// l'API : impossible de calculer une marge nette sans lui (cf. bannière dans la page).
-export interface AffiliateNetworkRow {
-  networkName: string;
-  totalOrders: number;
-  confirmedOrders: number;
-  deliveredOrders: number;
-  totalPayout: number | null;
-  // total_payout ÷ confirmées (payé à la confirmation, pas à la livraison — cf. lib/affiliates.ts).
-  payoutPerConfirmedUsd: number | null;
-}
-
 export interface ProfitabilityData {
   mediaBuying: MediaBuyingCountryRow[];
   outOfScopeAdSpend: OutOfScopeAdSpend[];
-  affiliates: AffiliateNetworkRow[];
-  affiliatesError: string | null;
+  affiliatePayoutError: string | null;
 }
 
 // Agrège TOUS les réseaux logistiques par pays (nom résolu par chaque provider, canonique ou
@@ -105,34 +95,38 @@ export function aggregateAdSpendByCountry(metaAdsRows: { country: string; spend:
   return { byCountry, outOfScope };
 }
 
-async function fetchAffiliateNetworks(dateFrom: string, dateTo: string): Promise<{ rows: AffiliateNetworkRow[]; error: string | null }> {
+// CRM Voralis (by_country) — payout affilié en USD, converti en devise locale via fx_to_usd par
+// l'appelant (même principe que lib/treasury.ts, dupliqué ici plutôt qu'importé pour éviter un
+// cycle profitability.ts <-> treasury.ts, treasury.ts important déjà depuis ce fichier). "by_country"
+// est un bloc GLOBAL tous affiliés confondus par pays (pas un croisement affilié × pays) — total_payout
+// est TOUJOURS en USD (confirmé par l'équipe CRM Voralis, jamais à reconvertir).
+async function fetchAffiliatePayoutUsdByCountry(
+  dateFrom: string,
+  dateTo: string
+): Promise<{ byCountry: Map<string, number>; error: string | null }> {
+  const byCountry = new Map<string, number>();
   try {
     const res = await fetch(`/api/networks?dateFrom=${dateFrom}&dateTo=${dateTo}`);
     const json = await res.json();
-    if (!json.success) return { rows: [], error: json.message ?? "Erreur CRM Voralis" };
+    if (!json.success) return { byCountry, error: json.message ?? "Erreur CRM Voralis" };
 
-    const rows: AffiliateNetworkRow[] = (json.networks ?? []).map(
-      (n: { name: string; stats: { total_orders: number; confirmed_orders: number; delivered_orders: number; total_payout: number } }) => ({
-        networkName: n.name,
-        totalOrders: n.stats.total_orders,
-        confirmedOrders: n.stats.confirmed_orders,
-        deliveredOrders: n.stats.delivered_orders,
-        totalPayout: n.stats.total_payout ?? null,
-        payoutPerConfirmedUsd: n.stats.confirmed_orders > 0 ? n.stats.total_payout / n.stats.confirmed_orders : null,
-      })
-    );
-    return { rows, error: null };
+    for (const row of (json.by_country ?? []) as { country: string; stats: { total_payout: number } }[]) {
+      const canonical = getCanonicalCountry(row.country);
+      if (!canonical) continue;
+      byCountry.set(canonical.name, (byCountry.get(canonical.name) ?? 0) + (row.stats.total_payout ?? 0));
+    }
+    return { byCountry, error: null };
   } catch (err) {
-    return { rows: [], error: err instanceof Error ? err.message : "Impossible de contacter le CRM Voralis." };
+    return { byCountry, error: err instanceof Error ? err.message : "Impossible de contacter le CRM Voralis." };
   }
 }
 
 export async function fetchProfitabilityData(dateFrom: string, dateTo: string): Promise<ProfitabilityData> {
-  const [aggregated, marketSettingsList, metaAdsRows, affiliates, quantitySentByCountry] = await Promise.all([
+  const [aggregated, marketSettingsList, metaAdsRows, affiliatePayout, quantitySentByCountry] = await Promise.all([
     aggregateCodNetworksByCountry(dateFrom, dateTo),
     fetchMarketSettings(),
     fetchMetaAdsByCountry(dateFrom, dateTo),
-    fetchAffiliateNetworks(dateFrom, dateTo),
+    fetchAffiliatePayoutUsdByCountry(dateFrom, dateTo),
     fetchQuantitySentByCountry(dateFrom, dateTo),
   ]);
 
@@ -165,6 +159,7 @@ export async function fetchProfitabilityData(dateFrom: string, dateTo: string): 
   const mediaBuying: MediaBuyingCountryRow[] = [];
   for (const [countryName, { livres: networkLivres, caLivre: networkCaLivre, currency: rawCurrency }] of aggregated) {
     const settings = marketSettingsByPays.get(countryName);
+    const payoutAffiliesUsd = affiliatePayout.byCountry.get(countryName) ?? 0;
 
     if (!settings) {
       // Pays servi par un réseau logistique mais sans configuration marché (2026-08-04, ex.
@@ -182,6 +177,7 @@ export async function fetchProfitabilityData(dateFrom: string, dateTo: string): 
         caLivre: networkCaLivre,
         adSpendLocal: 0,
         adSpendKnown: false,
+        payoutAffiliesLocal: 0,
         margin: {
           fraisLivraisonTotal: null,
           chargesExternesTotal: null,
@@ -201,6 +197,7 @@ export async function fetchProfitabilityData(dateFrom: string, dateTo: string): 
     const adSpendUsd = adSpendByCanonicalCountry.get(countryName) ?? 0;
     const adSpendKnown = adSpendByCanonicalCountry.has(countryName);
     const adSpendLocal = adSpendUsd * settings.fx_to_usd;
+    const payoutAffiliesLocal = payoutAffiliesUsd * settings.fx_to_usd;
 
     const recap = fieldCashByPays.get(countryName) ?? null;
     const { fraisLivraisonTotal, chargesExternesTotal } = resolveFraisLivraison(settings, networkLivres, recap);
@@ -212,7 +209,10 @@ export async function fetchProfitabilityData(dateFrom: string, dateTo: string): 
     const quantitySent = quantitySentByCountry.get(countryName) ?? 0;
     const cogsTotal = (COGS_PRODUCTION_UNIT_USD + COGS_SHIPPING_UNIT_USD) * quantitySent * settings.fx_to_usd;
     const base = computeBaseMargin(caLivre, settings, fraisLivraisonTotal, chargesExternesTotal, cogsTotal);
-    const margin = finalizeMargin(base, livres, adSpendLocal, "ad spend");
+    // coutSpecifique = ad spend + payout affiliés (2026-08-05) : les deux coûts d'acquisition
+    // combinés, puisque livres/caLivre couvrent désormais TOUTES les commandes du réseau, qu'elles
+    // viennent de media buying interne ou d'affiliés externes — voir avertissement en tête de fichier.
+    const margin = finalizeMargin(base, livres, adSpendLocal + payoutAffiliesLocal, "ad spend + payout affiliés");
 
     mediaBuying.push({
       countryName,
@@ -221,6 +221,7 @@ export async function fetchProfitabilityData(dateFrom: string, dateTo: string): 
       caLivre,
       adSpendLocal,
       adSpendKnown,
+      payoutAffiliesLocal,
       margin,
       fxToUsd: settings.fx_to_usd,
       hasMarketSettings: true,
@@ -230,7 +231,6 @@ export async function fetchProfitabilityData(dateFrom: string, dateTo: string): 
   return {
     mediaBuying: mediaBuying.sort((a, b) => b.caLivre - a.caLivre),
     outOfScopeAdSpend,
-    affiliates: affiliates.rows,
-    affiliatesError: affiliates.error,
+    affiliatePayoutError: affiliatePayout.error,
   };
 }

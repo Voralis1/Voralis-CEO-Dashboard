@@ -91,9 +91,9 @@ export default function ProfitabilityPage() {
     );
   }
 
-  const totalLivresMediaBuying = data.mediaBuying.reduce((s, r) => s + r.livres, 0);
-  const totalLivresAffiliates = data.affiliates.reduce((s, r) => s + r.deliveredOrders, 0);
-  const totalLivres = totalLivresMediaBuying + totalLivresAffiliates;
+  // Total réseau brut = déjà TOUTES les commandes livrées, affiliés externes + media buying
+  // interne confondus (2026-08-05, voir lib/profitability.ts) — rien à additionner en plus.
+  const totalLivres = data.mediaBuying.reduce((s, r) => s + r.livres, 0);
 
   return (
     <div>
@@ -127,16 +127,20 @@ export default function ProfitabilityPage() {
           </Section>
         </div>
 
-        {/* ═══ MEDIA BUYING INTERNE ═══ */}
+        {/* ═══ RENTABILITÉ PAR PAYS (toutes affiliations confondues) ═══ */}
         <Section
           title="marge par pays"
-          titleRight={<Badge variant="blue">marge = revenu net livraison − ad spend − COGS (call center inclus dans les frais de livraison)</Badge>}
+          titleRight={
+            <span title="Livrées/CA livré = total brut des partenaires logistiques, sans distinction de canal (media buying interne + affiliés externes CRM Voralis). Les deux coûts d'acquisition sont déduits en face, qu'importe quel canal a réellement apporté chaque commande.">
+              <Badge variant="blue">marge = revenu net livraison − ad spend − payout affiliés − COGS (call center inclus dans les frais de livraison)</Badge>
+            </span>
+          }
         >
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-slate-200">
-                  {["Pays", "Livrées", "CA livré encaissé", "Frais livraison", "Ad spend", "Marge nette", "Profit par commande livrée"].map(
+                  {["Pays", "Livrées", "CA livré encaissé", "Frais livraison", "Ad spend", "Payout affiliés", "Marge nette", "Profit par commande livrée"].map(
                     (h) => (
                       <th key={h} className="text-left px-3 py-2.5 text-slate-500 font-medium whitespace-nowrap">
                         {h}
@@ -180,6 +184,9 @@ export default function ProfitabilityPage() {
                           <Info size={10} />
                         </span>
                       )}
+                    </td>
+                    <td className="px-3 py-3 text-slate-700">
+                      <AmountCell valueLocal={r.payoutAffiliesLocal} currency={r.currency} fxToUsd={r.fxToUsd} />
                     </td>
                     <td className="px-3 py-3 font-semibold">
                       {r.margin.margeNette != null ? (

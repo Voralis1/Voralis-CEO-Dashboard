@@ -6,7 +6,8 @@ import type { MarketSettings } from "./marketSettings";
 // Marché témoin réaliste (pas les chiffres d'exemple du brief original, qui ignoraient les
 // frais de livraison) : fx=830 (AOA/USD), AOV observé=25000 AOA, conf%=45, DR%=75, T=1500 AOA.
 // Le coût call center n'est plus un champ séparé (2026-07-06) : confirmé par le CEO comme déjà
-// inclus dans les 11 USD/commande de frais de livraison fixe.
+// inclus dans les 13 USD/commande de frais de livraison fixe (11$ forfait + 2$ charge fixe
+// depuis le 2026-08-05, voir lib/marketSettings.ts).
 // cogs_produit/cogs_devise/taux_retour/frais_retour_local (2026-07-14) : colonnes SUPPRIMÉES de
 // market_settings — COGS vient désormais d'un taux forfaitaire partagé (COGS_PRODUCTION_UNIT_USD
 // + COGS_SHIPPING_UNIT_USD = 15$/unité, cf. lib/margin.ts), et les retours ont été retirés de la
@@ -33,7 +34,7 @@ function buildSettings(overrides: Partial<MarketSettings> = {}): MarketSettings 
 const PERIODE = { dateFrom: "2026-06-01", dateTo: "2026-06-30" };
 
 describe("lib/thresholds — computeThresholdRow (marché témoin, avec frais de livraison réels)", () => {
-  it("recalcule toute la chaîne M -> L -> CPL max -> payout max avec le COGS forfaitaire (15$/unité) et les 11$ de frais de livraison", () => {
+  it("recalcule toute la chaîne M -> L -> CPL max -> payout max avec le COGS forfaitaire (15$/unité) et les 13$ de frais de livraison", () => {
     const settings = buildSettings();
     const row = computeThresholdRow(settings, 25000, null, null, PERIODE);
 
@@ -42,27 +43,27 @@ describe("lib/thresholds — computeThresholdRow (marché témoin, avec frais de
     expect(row.aovSource).toBe("observed");
     expect(row.fxMissing).toBe(false);
 
-    // frais_livraison_local = 11 * 830 = 9130 AOA (call center déjà inclus dedans) ; cogs_local =
-    // (7+8) * 830 = 12450 AOA (forfait partagé, ne dépend plus de market_settings.cogs_produit) :
-    // M_local = (25000 - 9130) - 12450 = 3420 AOA. L = 1/(0.45*0.75) = 80/27 (utilisé par les
-    // plafonds CPL, pas par M).
+    // frais_livraison_local = 13 * 830 = 10790 AOA (11$ forfait + 2$ charge fixe, call center
+    // déjà inclus dedans) ; cogs_local = (7+8) * 830 = 12450 AOA (forfait partagé, ne dépend plus
+    // de market_settings.cogs_produit) : M_local = (25000 - 10790) - 12450 = 1760 AOA.
+    // L = 1/(0.45*0.75) = 80/27 (utilisé par les plafonds CPL, pas par M).
     expect(row.ceoDetail!.L).toBeCloseTo(2.9630, 4);
     expect(row.ceoDetail!.cogsPerUnitLocal).toBeCloseTo(12450, 3);
-    expect(row.ceoDetail!.M_local).toBeCloseTo(3420, 3);
-    expect(row.ceoDetail!.M_usd).toBeCloseTo(4.1205, 4);
+    expect(row.ceoDetail!.M_local).toBeCloseTo(1760, 3);
+    expect(row.ceoDetail!.M_usd).toBeCloseTo(2.1205, 4);
     expect(row.ceoDetail!.T_usd).toBeCloseTo(1.8072, 4);
 
-    expect(row.cplMaxUsd).toBeCloseTo(0.7807, 4);
-    expect(row.cplBreakEvenUsd).toBeCloseTo(1.3907, 4);
-    expect(row.cplMaxLocal).toBeCloseTo(648, 3);
+    expect(row.cplMaxUsd).toBeCloseTo(0.1057, 4);
+    expect(row.cplBreakEvenUsd).toBeCloseTo(0.7157, 4);
+    expect(row.cplMaxLocal).toBeCloseTo(87.75, 3);
     // Payout affiliés (2026-07-14) : forfait fixe de 9$ (AFFILIATE_PAYOUT_MAX_USD), plus calculé
     // via dr_pct×(M-T) — break-even déduit par la même proportion que cplBreakEvenUsd/cplMaxUsd
-    // (= M_usd/(M_usd-T_usd) = (342/83)/(192/83) = 1.78125) : 9 * 1.78125 = 16.03125.
+    // (= M_usd/(M_usd-T_usd) = (176/83)/(26/83) = 6.76923) : 9 * 6.76923 = 60.9231.
     expect(row.payoutMaxUsd).toBeCloseTo(9, 4);
-    expect(row.payoutBreakEvenUsd).toBeCloseTo(16.03125, 4);
+    expect(row.payoutBreakEvenUsd).toBeCloseTo(60.9231, 4);
 
-    // Preuve que le frais de livraison n'est pas un ajustement mineur : sans les 11$ déduits,
-    // M_usd serait ~15.1 (presque 4x plus) — le COGS forfaitaire (12450 AOA) reste le même, seul
+    // Preuve que le frais de livraison n'est pas un ajustement mineur : sans les 13$ déduits,
+    // M_usd serait ~15.1 (plus de 7x plus) — le COGS forfaitaire (12450 AOA) reste le même, seul
     // le frais de livraison change dans cette comparaison "naïve".
     const cogsLocal = 12450;
     const M_usd_sans_frais_livraison = (25000 - cogsLocal) / 830;
@@ -123,9 +124,9 @@ describe("lib/thresholds — computeThresholdRow (marché témoin, avec frais de
   it("code couleur : vert si réel <= max, orange si max < réel <= break-even, rouge si réel > break-even, null si pas de réel", () => {
     const settings = buildSettings();
 
-    // cplMaxUsd ≈ 0.7807, cplBreakEvenUsd ≈ 1.3907 pour ce marché témoin (cf. test précédent).
-    expect(computeThresholdRow(settings, 25000, 0.5, null, PERIODE).cplColor).toBe("green");
-    expect(computeThresholdRow(settings, 25000, 1.0, null, PERIODE).cplColor).toBe("orange");
+    // cplMaxUsd ≈ 0.1057, cplBreakEvenUsd ≈ 0.7157 pour ce marché témoin (cf. test précédent).
+    expect(computeThresholdRow(settings, 25000, 0.05, null, PERIODE).cplColor).toBe("green");
+    expect(computeThresholdRow(settings, 25000, 0.5, null, PERIODE).cplColor).toBe("orange");
     expect(computeThresholdRow(settings, 25000, 2.0, null, PERIODE).cplColor).toBe("red");
     expect(computeThresholdRow(settings, 25000, null, null, PERIODE).cplColor).toBeNull();
   });
