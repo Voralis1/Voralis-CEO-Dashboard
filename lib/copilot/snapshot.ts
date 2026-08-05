@@ -244,11 +244,19 @@ async function fetchAffiliateData(
 }
 
 // Quantité envoyée par pays (2026-07-14, COGS du moteur de marge) — équivalent SERVEUR de
-// fetchQuantitySentByCountry (lib/supabase/queries.ts, client uniquement) : même 4 tables, mêmes
-// colonnes, mais via supabaseAdmin puisque ce module ne peut pas utiliser le client navigateur
-// (pas de session utilisateur en contexte serveur pur — voir commentaire en tête de fichier).
+// fetchQuantitySentByCountry (lib/supabase/queries.ts, client uniquement) : mêmes 6 tables (+
+// shiplead_shipments/mlshipafrica_shipments depuis 2026-08-05), mêmes colonnes, mais via
+// supabaseAdmin puisque ce module ne peut pas utiliser le client navigateur (pas de session
+// utilisateur en contexte serveur pur — voir commentaire en tête de fichier).
 async function fetchQuantitySentByCountryServer(dateFrom: string, dateTo: string): Promise<Map<string, number>> {
-  const tables = ["clickmarket_shipments", "coliscod_shipments", "africod_congo_shipments", "shipsen_expeditions"];
+  const tables = [
+    "clickmarket_shipments",
+    "coliscod_shipments",
+    "africod_congo_shipments",
+    "shipsen_expeditions",
+    "shiplead_shipments",
+    "mlshipafrica_shipments",
+  ];
   const results = await Promise.all(
     tables.map((table) =>
       supabaseAdmin.from(table).select("country, quantity_sent").gte("shipment_date", dateFrom).lte("shipment_date", dateTo)

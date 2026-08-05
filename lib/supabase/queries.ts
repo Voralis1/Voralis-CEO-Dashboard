@@ -355,6 +355,14 @@ export async function fetchShipsenExpeditions(dateFrom?: string, dateTo?: string
   return fetchShipmentsFromTable("shipsen_expeditions", dateFrom, dateTo);
 }
 
+export async function fetchShipLeadShipments(dateFrom?: string, dateTo?: string) {
+  return fetchShipmentsFromTable("shiplead_shipments", dateFrom, dateTo);
+}
+
+export async function fetchMLShipAfricaShipments(dateFrom?: string, dateTo?: string) {
+  return fetchShipmentsFromTable("mlshipafrica_shipments", dateFrom, dateTo);
+}
+
 // Quantité envoyée (stock entrant fournisseur→warehouse), agrégée par pays canonique et sommée
 // sur les 4 réseaux logistiques + Shipsen — source unique pour Trésorerie (COGS "Cash Out par
 // pays") ET Rentabilité/Copilot (COGS du moteur de marge, lib/margin.ts), qui doivent voir
@@ -364,15 +372,17 @@ export async function fetchShipsenExpeditions(dateFrom?: string, dateTo?: string
 // besoin d'un équivalent server-side (supabaseAdmin) pour lib/copilot/snapshot.ts, qui ne peut
 // pas utiliser ces fetchers client (RLS/session utilisateur absente en contexte serveur pur).
 export async function fetchQuantitySentByCountry(dateFrom: string, dateTo: string): Promise<Map<string, number>> {
-  const [cm, cs, ac, se] = await Promise.all([
+  const [cm, cs, ac, se, sl, ml] = await Promise.all([
     fetchClickMarketShipments(dateFrom, dateTo),
     fetchColiscodShipments(dateFrom, dateTo),
     fetchAfricodCongoShipments(dateFrom, dateTo),
     fetchShipsenExpeditions(dateFrom, dateTo),
+    fetchShipLeadShipments(dateFrom, dateTo),
+    fetchMLShipAfricaShipments(dateFrom, dateTo),
   ]);
 
   const byCountry = new Map<string, number>();
-  for (const row of [...cm, ...cs, ...ac, ...se]) {
+  for (const row of [...cm, ...cs, ...ac, ...se, ...sl, ...ml]) {
     const canonical = getCanonicalCountry(row.country);
     if (!canonical) continue;
     byCountry.set(canonical.name, (byCountry.get(canonical.name) ?? 0) + (row.quantity_sent ?? 0));

@@ -1,0 +1,32 @@
+name: Sync ShipLead Shipments → Supabase
+
+# Nouvelle intégration (2026-08-05) — pas de workflow n8n préexistant pour ce flux, voir
+# scripts/sync/sync_shiplead_shipments.py. Cadence horaire pilotée directement par le `schedule`
+# natif de GitHub Actions (voir sync-clickmarket-shipments.yml pour l'explication — pas besoin de
+# pg_cron/pg_net à cette fréquence).
+on:
+  schedule:
+    - cron: "50 * * * *" # décalée par rapport aux autres synchros stock pour étaler la charge
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: pip install -r scripts/sync/requirements.txt
+
+      - name: Lancer la synchro ShipLead Shipments
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SHIPLEAD_EMAIL: ${{ secrets.SHIPLEAD_EMAIL }}
+          SHIPLEAD_PASSWORD: ${{ secrets.SHIPLEAD_PASSWORD }}
+        run: python scripts/sync/sync_shiplead_shipments.py

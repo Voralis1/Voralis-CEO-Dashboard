@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Topbar from "@/components/layout/Topbar";
 import { Section, Badge } from "@/components/ui";
-import { COUNTRY_FLAGS } from "@/lib/countries";
+import { COUNTRY_FLAGS, getCanonicalCountry } from "@/lib/countries";
 import { fetchCrmStock, type StockCrmRow } from "@/lib/inventory";
 import { fetchPublicMarketSettings } from "@/lib/marketSettings";
 import {
@@ -10,6 +10,9 @@ import {
   fetchColiscodShipments,
   fetchAfricodCongoShipments,
   fetchShipsenExpeditions,
+  fetchShipLeadShipments,
+  fetchMLShipAfricaShipments,
+  type ShipmentRow,
 } from "@/lib/supabase/queries";
 import ShipmentsTable from "@/components/inventory/ShipmentsTable";
 import { AlertTriangle, Loader2 } from "lucide-react";
@@ -17,6 +20,20 @@ import { AlertTriangle, Loader2 } from "lucide-react";
 const MISSING = <span className="text-slate-400 italic">valeur manquante</span>;
 
 const ALL_MARKETS = "all";
+
+// Un réseau logistique par entrée — la liste des pays qu'il couvre n'est JAMAIS codée en dur
+// (elle bougerait avec le temps, ex. ClickMarket détecte ses marchés automatiquement à la
+// connexion) : elle est déduite ci-dessous des expéditions réellement synchronisées, tous
+// historiques confondus (indépendant du filtre de dates affiché), pour ne montrer le tableau
+// d'un réseau sur l'onglet d'un marché que s'il a déjà expédié vers ce marché.
+const SHIPMENT_NETWORKS: { key: string; title: string; fetchRows: (dateFrom?: string, dateTo?: string) => Promise<ShipmentRow[]> }[] = [
+  { key: "clickmarket", title: "Stock entrant — ClickMarket", fetchRows: fetchClickMarketShipments },
+  { key: "coliscod", title: "Stock entrant — Coliscod Angola", fetchRows: fetchColiscodShipments },
+  { key: "africod-congo", title: "Stock entrant — Africod Congo", fetchRows: fetchAfricodCongoShipments },
+  { key: "shipsen", title: "Stock entrant — Shipsen", fetchRows: fetchShipsenExpeditions },
+  { key: "shiplead", title: "Stock entrant — ShipLead", fetchRows: fetchShipLeadShipments },
+  { key: "mlshipafrica", title: "Stock entrant — MLShipAfrica", fetchRows: fetchMLShipAfricaShipments },
+];
 
 // Stock & Inventaire (2026-07-08) : lecture seule intégrale des produits CRM Voralis pour
 // l'Angola — plus de saisie manuelle, plus de seuil calculé localement (délai appro/stock
@@ -32,6 +49,10 @@ export default function InventoryPage() {
   const [filterProduit, setFilterProduit] = useState("");
   const [marketOptions, setMarketOptions] = useState<string[]>([]);
   const [selectedMarket, setSelectedMarket] = useState<string>(ALL_MARKETS);
+  // Pays couverts par chaque réseau, tous historiques confondus — null tant que non chargé
+  // (auquel cas on affiche tout par défaut, jamais l'inverse, pour ne jamais cacher un tableau
+  // à tort le temps du chargement).
+  const [networkCoverage, setNetworkCoverage] = useState<Record<string, Set<string>> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,6 +88,36 @@ export default function InventoryPage() {
       .catch(() => {
         // Onglets par marché optionnels — un échec de chargement laisse juste "Tous les marchés".
       });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Un seul appel non borné par date par réseau (les tables de stock entrant sont petites —
+    // quelques dizaines de lignes) pour déterminer une fois pour toutes quels marchés chaque
+    // réseau a déjà desservis, indépendamment du filtre de dates affiché.
+    Promise.all(
+      SHIPMENT_NETWORKS.map(async (net) => {
+        try {
+          const rows = await net.fetchRows();
+          const countries = new Set(rows.map((r) => getCanonicalCountry(r.country)?.name).filter((c): c is string => !!c));
+          return [net.key, countries] as const;
+        } catch {
+          // Échec pour un réseau : on ne sait pas ce qu'il couvre — ne jamais le cacher à tort,
+          // voir le rendu ci-dessous (absence de clé = toujours affiché).
+          return [net.key, null] as const;
+        }
+      })
+    ).then((entries) => {
+      if (cancelled) return;
+      const coverage: Record<string, Set<string>> = {};
+      for (const [key, countries] of entries) {
+        if (countries) coverage[key] = countries;
+      }
+      setNetworkCoverage(coverage);
+    });
     return () => {
       cancelled = true;
     };
@@ -197,14 +248,18 @@ export default function InventoryPage() {
         )}
 
         {/* Stock entrant (expéditions fournisseur → warehouse) par réseau logistique — distinct
-            du tableau CRM ci-dessus (produits en stock côté vente, pas expéditions). Les 4
-            réseaux restent affichés côte à côte (un marché ne correspond qu'à un sous-ensemble
-            de réseaux — ex. Mali n'existe que côté Shipsen) ; le tableau filtré sur un marché
-            sans données pour ce réseau affiche simplement "Aucune expédition". */}
-        <ShipmentsTable title="Stock entrant — ClickMarket" fetchRows={fetchClickMarketShipments} countryFilter={shipmentsCountryFilter} />
-        <ShipmentsTable title="Stock entrant — Coliscod Angola" fetchRows={fetchColiscodShipments} countryFilter={shipmentsCountryFilter} />
-        <ShipmentsTable title="Stock entrant — Africod Congo" fetchRows={fetchAfricodCongoShipments} countryFilter={shipmentsCountryFilter} />
-        <ShipmentsTable title="Stock entrant — Shipsen" fetchRows={fetchShipsenExpeditions} countryFilter={shipmentsCountryFilter} />
+            du tableau CRM ci-dessus (produits en stock côté vente, pas expéditions). Sur l'onglet
+            d'un marché précis, seuls les réseaux ayant déjà desservi ce marché s'affichent (voir
+            networkCoverage) — "Tous les marchés" affiche toujours les 6. */}
+        {SHIPMENT_NETWORKS.map((net) => {
+          const covers =
+            selectedMarket === ALL_MARKETS ||
+            networkCoverage === null ||
+            networkCoverage[net.key] === undefined ||
+            networkCoverage[net.key].has(selectedMarket);
+          if (!covers) return null;
+          return <ShipmentsTable key={net.key} title={net.title} fetchRows={net.fetchRows} countryFilter={shipmentsCountryFilter} />;
+        })}
       </div>
     </div>
   );
