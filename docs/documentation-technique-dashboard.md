@@ -251,7 +251,7 @@ voralis-ceo/
 │   │   ├── profitability/        # Rentabilité
 │   │   ├── thresholds/           # Seuils & plafonds
 │   │   ├── meta-ads/             # Media Buying Interne
-│   │   ├── logistics-cod/        # Réseaux Logistiques / COD
+│   │   ├── logistics-cod/        # Réseaux Logistiques
 │   │   ├── crm-voralis/          # CRM Voralis / Affiliés
 │   │   ├── inventory/            # Stock & Inventaire
 │   │   ├── copilot/              # Copilot IA

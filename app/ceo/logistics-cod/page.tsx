@@ -67,7 +67,7 @@ function LogisticsCodContent() {
   return (
     <div>
       <Topbar
-        title="Réseaux Logistiques / COD"
+        title="Réseaux Logistiques"
         subtitle="ClickMarket, Coliscod Angola, Africod Congo, Shipsen, ShipLead, MLShipAfrica, Ikatchiexpress — un onglet par réseau"
       />
 

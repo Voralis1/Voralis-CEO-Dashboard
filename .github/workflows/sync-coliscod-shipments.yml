@@ -1,0 +1,31 @@
+name: Sync Coliscod Shipments → Supabase
+
+# Remplace n8n/coliscod-shipments-sync.workflow.json (2026-08-05).
+# Cadence horaire (demande CEO) — voir sync-clickmarket-shipments.yml pour l'explication (pas
+# besoin de pg_cron/pg_net à cette fréquence, le `schedule` natif de GitHub Actions suffit).
+on:
+  schedule:
+    - cron: "20 * * * *" # décalée de 20 min par rapport aux autres synchros stock pour étaler la charge
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: pip install -r scripts/sync/requirements.txt
+
+      - name: Lancer la synchro Coliscod Shipments
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          COLISCOD_EMAIL: ${{ secrets.COLISCOD_EMAIL }}
+          COLISCOD_PASSWORD: ${{ secrets.COLISCOD_PASSWORD }}
+        run: python scripts/sync/sync_coliscod_shipments.py

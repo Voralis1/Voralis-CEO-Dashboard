@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-// Shipsen a été fusionné dans la vue groupée "Réseaux Logistiques / COD" — on redirige vers
+// Shipsen a été fusionné dans la vue groupée "Réseaux Logistiques" — on redirige vers
 // cette page avec le réseau déjà pré-sélectionné, pour ne pas casser les liens/favoris
 // existants vers cette ancienne URL.
 export default function ShipsenRedirect() {

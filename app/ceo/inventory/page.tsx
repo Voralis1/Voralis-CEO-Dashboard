@@ -4,6 +4,7 @@ import Topbar from "@/components/layout/Topbar";
 import { Section, Badge } from "@/components/ui";
 import { COUNTRY_FLAGS } from "@/lib/countries";
 import { fetchCrmStock, type StockCrmRow } from "@/lib/inventory";
+import { fetchPublicMarketSettings } from "@/lib/marketSettings";
 import {
   fetchClickMarketShipments,
   fetchColiscodShipments,
@@ -15,16 +16,7 @@ import { AlertTriangle, Loader2 } from "lucide-react";
 
 const MISSING = <span className="text-slate-400 italic">valeur manquante</span>;
 
-type SourceFilter = "all" | "crm-angola" | "clickmarket" | "coliscod" | "africod-congo" | "shipsen";
-
-const SOURCE_OPTIONS: { value: SourceFilter; label: string }[] = [
-  { value: "all", label: "Toutes les sources" },
-  { value: "crm-angola", label: "Inventaire Angola CRM" },
-  { value: "clickmarket", label: "Stock entrant — ClickMarket" },
-  { value: "coliscod", label: "Stock entrant — Coliscod Angola" },
-  { value: "africod-congo", label: "Stock entrant — Africod Congo" },
-  { value: "shipsen", label: "Stock entrant — Shipsen" },
-];
+const ALL_MARKETS = "all";
 
 // Stock & Inventaire (2026-07-08) : lecture seule intégrale des produits CRM Voralis pour
 // l'Angola — plus de saisie manuelle, plus de seuil calculé localement (délai appro/stock
@@ -38,7 +30,8 @@ export default function InventoryPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [filterProduit, setFilterProduit] = useState("");
-  const [selectedSource, setSelectedSource] = useState<SourceFilter>("all");
+  const [marketOptions, setMarketOptions] = useState<string[]>([]);
+  const [selectedMarket, setSelectedMarket] = useState<string>(ALL_MARKETS);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,6 +55,23 @@ export default function InventoryPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    // Liste des marchés via market_settings — source unique de vérité, jamais une liste codée
+    // en dur : un nouveau pays (ex. Centrafrique) apparaît ici automatiquement dès sa première
+    // commande, sans intervention (voir lib/countries.ts).
+    fetchPublicMarketSettings()
+      .then((settings) => {
+        if (!cancelled) setMarketOptions(settings.map((s) => s.pays));
+      })
+      .catch(() => {
+        // Onglets par marché optionnels — un échec de chargement laisse juste "Tous les marchés".
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Ce tableau CRM ne couvre plus que l'Angola (demande CEO, 2026-07) — les autres pays sont
   // couverts par les tableaux de stock entrant par réseau logistique ci-dessous.
   const angolaRows = useMemo(() => stockRows.filter((r) => r.pays === "Angola"), [stockRows]);
@@ -73,6 +83,9 @@ export default function InventoryPage() {
       ),
     [angolaRows, filterProduit]
   );
+
+  const showCrmAngola = selectedMarket === ALL_MARKETS || selectedMarket === "Angola";
+  const shipmentsCountryFilter = selectedMarket === ALL_MARKETS ? undefined : selectedMarket;
 
   if (loading) {
     return (
@@ -100,18 +113,6 @@ export default function InventoryPage() {
 
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 bg-slate-50 rounded-lg p-2">
-            <label className="text-xs text-slate-500">Source</label>
-            <select
-              value={selectedSource}
-              onChange={(e) => setSelectedSource(e.target.value as SourceFilter)}
-              className="px-2 py-1.5 text-xs bg-white border border-slate-300 rounded-md"
-            >
-              {SOURCE_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-          </div>
-          <div className="flex items-center gap-2 bg-slate-50 rounded-lg p-2">
             <label className="text-xs text-slate-500">Produit</label>
             <input
               value={filterProduit}
@@ -122,7 +123,36 @@ export default function InventoryPage() {
           </div>
         </div>
 
-        {(selectedSource === "all" || selectedSource === "crm-angola") && (
+        {/* Petits onglets — un marché à la fois, même pattern que "Réseaux Logistiques" */}
+        <div className="flex flex-wrap gap-1.5 border-b border-slate-200 pb-0">
+          <button
+            onClick={() => setSelectedMarket(ALL_MARKETS)}
+            className={
+              "px-3.5 py-2 text-xs font-medium rounded-t-lg border-b-2 transition-colors " +
+              (selectedMarket === ALL_MARKETS
+                ? "border-emerald-500 text-emerald-700 bg-emerald-50"
+                : "border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50")
+            }
+          >
+            Tous les marchés
+          </button>
+          {marketOptions.map((pays) => (
+            <button
+              key={pays}
+              onClick={() => setSelectedMarket(pays)}
+              className={
+                "px-3.5 py-2 text-xs font-medium rounded-t-lg border-b-2 transition-colors " +
+                (selectedMarket === pays
+                  ? "border-emerald-500 text-emerald-700 bg-emerald-50"
+                  : "border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50")
+              }
+            >
+              {COUNTRY_FLAGS[pays] ?? "🌍"} {pays}
+            </button>
+          ))}
+        </div>
+
+        {showCrmAngola && (
         <Section title="Inventaire Angola CRM">
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -167,19 +197,14 @@ export default function InventoryPage() {
         )}
 
         {/* Stock entrant (expéditions fournisseur → warehouse) par réseau logistique — distinct
-            du tableau CRM ci-dessus (produits en stock côté vente, pas expéditions). */}
-        {(selectedSource === "all" || selectedSource === "clickmarket") && (
-          <ShipmentsTable title="Stock entrant — ClickMarket" fetchRows={fetchClickMarketShipments} />
-        )}
-        {(selectedSource === "all" || selectedSource === "coliscod") && (
-          <ShipmentsTable title="Stock entrant — Coliscod Angola" fetchRows={fetchColiscodShipments} />
-        )}
-        {(selectedSource === "all" || selectedSource === "africod-congo") && (
-          <ShipmentsTable title="Stock entrant — Africod Congo" fetchRows={fetchAfricodCongoShipments} />
-        )}
-        {(selectedSource === "all" || selectedSource === "shipsen") && (
-          <ShipmentsTable title="Stock entrant — Shipsen" fetchRows={fetchShipsenExpeditions} />
-        )}
+            du tableau CRM ci-dessus (produits en stock côté vente, pas expéditions). Les 4
+            réseaux restent affichés côte à côte (un marché ne correspond qu'à un sous-ensemble
+            de réseaux — ex. Mali n'existe que côté Shipsen) ; le tableau filtré sur un marché
+            sans données pour ce réseau affiche simplement "Aucune expédition". */}
+        <ShipmentsTable title="Stock entrant — ClickMarket" fetchRows={fetchClickMarketShipments} countryFilter={shipmentsCountryFilter} />
+        <ShipmentsTable title="Stock entrant — Coliscod Angola" fetchRows={fetchColiscodShipments} countryFilter={shipmentsCountryFilter} />
+        <ShipmentsTable title="Stock entrant — Africod Congo" fetchRows={fetchAfricodCongoShipments} countryFilter={shipmentsCountryFilter} />
+        <ShipmentsTable title="Stock entrant — Shipsen" fetchRows={fetchShipsenExpeditions} countryFilter={shipmentsCountryFilter} />
       </div>
     </div>
   );

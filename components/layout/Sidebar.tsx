@@ -19,16 +19,18 @@ import {
   Target,
   Package,
   Bot,
+  BarChart3,
 } from "lucide-react";
 import { fetchNetworkOverview, computeAlerts } from "@/lib/dashboardData";
 
 const NAV = [
+  { href: "/ceo/dashboard",     label: "Tableau de bord", icon: BarChart3 },
   { href: "/ceo",               label: "Trésorerie", icon: LayoutDashboard, exact: true },
   { href: "/ceo/profitability", label: "Rentabilité", icon: TrendingUp },
   { href: "/ceo/thresholds",    label: "Seuils & plafonds", icon: Target },
   { href: "/ceo/meta-ads",      label: "Media Buying Interne", icon: Globe },
   { href: "/ceo/crm-voralis",   label: "Affiliés externes", icon: Share2 },
-  { href: "/ceo/logistics-cod", label: "Réseaux Logistiques / COD", icon: Zap },
+  { href: "/ceo/logistics-cod", label: "Réseaux Logistiques", icon: Zap },
   { href: "/ceo/inventory",     label: "Stock & Inventaire", icon: Package },
   { href: "/ceo/copilot",       label: "Copilot IA", icon: Bot },
   { href: "/ceo/alerts",        label: "Alertes",    icon: Bell },

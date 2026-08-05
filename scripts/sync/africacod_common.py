@@ -175,6 +175,106 @@ def fetch_orders_window(
     return list(by_order_id.values())
 
 
+def fetch_shipments_page(
+    base_url: str,
+    token: str,
+    country: dict,
+    page: int,
+    user_agent: str | None,
+    origin: str | None,
+    cloudflare_retry: bool,
+) -> dict:
+    """GET /product-shipments (stock entrant fournisseur → warehouse) — même mécanique de retry
+    403/429 que fetch_orders_page, mais endpoint et clé de réponse différents (`productShipments`,
+    pas `orders`)."""
+    attempt = 0
+    while True:
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "X-Selected-Country": json.dumps(country),
+        }
+        if user_agent:
+            headers["User-Agent"] = user_agent
+        if origin:
+            headers["Origin"] = origin
+            headers["Referer"] = f"{origin}/"
+
+        res = requests.get(
+            f"{base_url}/product-shipments",
+            params={"per_page": PER_PAGE, "page": page},
+            headers=headers,
+            timeout=30,
+        )
+        if cloudflare_retry and res.status_code in (403, 429):
+            attempt += 1
+            if attempt > 3:
+                raise RuntimeError(
+                    f"GET /product-shipments (page {page}) → HTTP {res.status_code} après 3 tentatives: {res.text[:500]}"
+                )
+            time.sleep(1.5 * attempt)
+            continue
+        if not res.ok:
+            raise RuntimeError(f"GET /product-shipments (page {page}) → HTTP {res.status_code}: {res.text[:500]}")
+        return res.json()
+
+
+def sync_shipments(
+    *,
+    base_url: str,
+    table: str,
+    token: str,
+    country: dict,
+    max_pages: int,
+    user_agent: str | None = None,
+    origin: str | None = None,
+    cloudflare_retry: bool = False,
+    page_delay: float = 0.0,
+    upsert_fn: Callable[[str, list[dict]], None],
+) -> int:
+    """Stock entrant : contrairement à sync_country (commandes, fenêtre glissante + arrêt
+    anticipé), ce flux est à faible volume — on republie l'intégralité de l'historique à chaque
+    exécution, exactement comme le faisait le workflow n8n d'origine (pas de fenêtre, pas
+    d'arrêt anticipé), plafonné par max_pages comme garde-fou. Aplatit shipment_items[] (un
+    shipment peut contenir plusieurs produits), dédup par item_id, upsert idempotent."""
+    by_item_id: dict[int, dict] = {}
+    page = 1
+    last_page = 1
+
+    while page <= last_page and page <= max_pages:
+        data = fetch_shipments_page(base_url, token, country, page, user_agent, origin, cloudflare_retry)
+        pagination = data.get("pagination") or {}
+        last_page = pagination.get("last_page") or 1
+
+        for s in data.get("productShipments") or []:
+            country_name = ((s.get("warehouse") or {}).get("country") or {}).get("name") or country.get("name")
+            for item in s.get("shipment_items") or []:
+                item_id = item.get("id")
+                if item_id is None:
+                    continue
+                by_item_id[item_id] = {
+                    "item_id": item_id,
+                    "shipment_id": s.get("id"),
+                    "country": country_name,
+                    "product_name": (item.get("product") or {}).get("name") or "Inconnu",
+                    "shipment_date": s.get("shipment_date"),
+                    "arrival_date": s.get("arrival_date"),
+                    "source_country": s.get("source_country"),
+                    "quantity_sent": item.get("quantity_sent"),
+                    "quantity_arrived": item.get("quantity_arrived"),
+                    "quantity_defected": item.get("quantity_defected"),
+                    "status": s.get("shipment_status"),
+                }
+
+        page += 1
+        if page_delay and page <= last_page:
+            time.sleep(page_delay)
+
+    rows = list(by_item_id.values())
+    upsert_fn(table, rows)
+    return len(rows)
+
+
 def sync_country(
     *,
     base_url: str,

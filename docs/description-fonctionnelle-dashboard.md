@@ -76,7 +76,7 @@ Le module le plus stratégique pour la prise de décision quotidienne : pour cha
 ### 4.4 Media Buying Interne
 Suivi des dépenses et performances publicitaires Meta Ads par pays (clics, impressions, leads, CPL, CTR), filtrable par période.
 
-### 4.5 Réseaux Logistiques / COD
+### 4.5 Réseaux Logistiques
 Vue unifiée des quatre réseaux logistiques (ClickMarket, Coliscod Angola, Africod Congo, Shipsen), avec des colonnes strictement identiques d'un réseau à l'autre (leads, confirmations, livraisons, taux, chiffre d'affaires livré, ruptures de stock, doublons), pour permettre une comparaison directe entre réseaux et pays.
 
 ### 4.6 CRM Voralis / Affiliés

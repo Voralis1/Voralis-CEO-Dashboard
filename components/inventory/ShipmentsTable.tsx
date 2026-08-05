@@ -1,7 +1,7 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Section, Badge } from "@/components/ui";
-import { COUNTRY_FLAGS } from "@/lib/countries";
+import { COUNTRY_FLAGS, getCanonicalCountry } from "@/lib/countries";
 import { useFilters } from "@/lib/filters";
 import { type ShipmentRow } from "@/lib/supabase/queries";
 import { Loader2, AlertTriangle } from "lucide-react";
@@ -9,6 +9,10 @@ import { Loader2, AlertTriangle } from "lucide-react";
 interface ShipmentsTableProps {
   title: string;
   fetchRows: (dateFrom?: string, dateTo?: string) => Promise<ShipmentRow[]>;
+  // Nom canonique (market_settings.pays) du marché sélectionné dans l'onglet — undefined/"all" =
+  // pas de filtre. row.country est un nom brut source (ex. "CoteIvoire", "Guinea"), d'où le
+  // passage par getCanonicalCountry() plutôt qu'une comparaison directe.
+  countryFilter?: string;
 }
 
 const MISSING = <span className="text-slate-400 italic">—</span>;
@@ -21,11 +25,16 @@ function fmtDate(value: string | null): React.ReactNode {
 // Tableau standard réutilisé pour les 4 réseaux logistiques (ClickMarket, Coliscod, Africod
 // Congo, Shipsen) — stock entrant (expéditions fournisseur → warehouse), pas les commandes
 // clients. Une ligne par (expédition, produit) — voir lib/supabase/queries.ts.
-export default function ShipmentsTable({ title, fetchRows }: ShipmentsTableProps) {
+export default function ShipmentsTable({ title, fetchRows, countryFilter }: ShipmentsTableProps) {
   const { dateFrom, dateTo } = useFilters();
   const [rows, setRows] = useState<ShipmentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const visibleRows = useMemo(
+    () => (countryFilter ? rows.filter((r) => getCanonicalCountry(r.country)?.name === countryFilter) : rows),
+    [rows, countryFilter]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -87,7 +96,7 @@ export default function ShipmentsTable({ title, fetchRows }: ShipmentsTableProps
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => (
+              {visibleRows.map((r, i) => (
                 <tr key={i} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                   <td className="px-3 py-3">
                     <span className="flex items-center gap-1.5 font-medium text-slate-900">
@@ -117,7 +126,7 @@ export default function ShipmentsTable({ title, fetchRows }: ShipmentsTableProps
                   </td>
                 </tr>
               ))}
-              {rows.length === 0 && (
+              {visibleRows.length === 0 && (
                 <tr>
                   <td colSpan={9} className="px-3 py-4 text-center text-slate-500">
                     Aucune expédition pour cette période.
