@@ -12,7 +12,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 from africacod_common import sync_country, login as af_login
-from common import DEFAULT_ROLLING_WINDOW_DAYS, MAX_PAGES_PER_WAREHOUSE, require_env, supabase_upsert
+from common import DEFAULT_ROLLING_WINDOW_DAYS, MAX_PAGES_PER_WAREHOUSE, require_env, supabase_prune_missing, supabase_upsert
 
 BASE_URL = "https://api.africacod.com/api"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -105,7 +105,7 @@ def main() -> None:
         sys.exit(1)
 
     try:
-        n = sync_country(
+        n, ids = sync_country(
             base_url=BASE_URL,
             table="coliscod_leads",
             token=token,
@@ -121,6 +121,10 @@ def main() -> None:
             upsert_fn=supabase_upsert,
         )
         print(f"[OK] {COUNTRY['name']}: {n} leads (depuis {window_start})")
+        # Nettoyage — uniquement pour un --full-rescan réussi, voir sync_clickmarket.py pour le
+        # raisonnement complet.
+        if args.full_rescan:
+            supabase_prune_missing("coliscod_leads", "order_id", ids)
         print(f"[SUMMARY] leads={n} finished_at={datetime.now(timezone.utc).isoformat()}")
         sys.exit(0)
     except Exception as err:  # noqa: BLE001

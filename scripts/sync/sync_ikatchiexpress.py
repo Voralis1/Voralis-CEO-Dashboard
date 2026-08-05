@@ -36,7 +36,7 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-from common import DEFAULT_ROLLING_WINDOW_DAYS, require_env, supabase_upsert
+from common import DEFAULT_ROLLING_WINDOW_DAYS, require_env, supabase_prune_missing, supabase_upsert
 
 BASE_URL = "https://api.atlasswift.com"
 PER_PAGE = 100
@@ -116,7 +116,7 @@ def map_row(o: dict) -> dict | None:
     }
 
 
-def sync(token: str, window_start: datetime, max_pages: int) -> int:
+def sync(token: str, window_start: datetime, max_pages: int) -> tuple[int, set[str]]:
     raw_orders = fetch_all_orders(token, max_pages)
     rows = []
     for o in raw_orders:
@@ -130,7 +130,7 @@ def sync(token: str, window_start: datetime, max_pages: int) -> int:
             rows.append(row)
 
     supabase_upsert("ikatchiexpress_orders", rows)
-    return len(rows)
+    return len(rows), {r["order_id"] for r in rows if r.get("order_id")}
 
 
 def parse_args() -> argparse.Namespace:
@@ -171,8 +171,13 @@ def main() -> None:
         sys.exit(1)
 
     try:
-        n = sync(token, window_start, max_pages)
+        n, ids = sync(token, window_start, max_pages)
         print(f"[OK] {n} commandes (depuis {window_start.date()})")
+        # Nettoyage — uniquement pour un --full-rescan (voir common.supabase_prune_missing pour
+        # le raisonnement complet, incident MLShipAfrica 2026-08-05). Compte encore minuscule ici,
+        # mais gardé pour la parité avec les autres réseaux.
+        if args.full_rescan:
+            supabase_prune_missing("ikatchiexpress_orders", "order_id", ids)
         print(f"[SUMMARY] orders={n} finished_at={datetime.now(timezone.utc).isoformat()}")
         sys.exit(0)
     except Exception as err:  # noqa: BLE001

@@ -26,7 +26,7 @@ import argparse
 import sys
 from datetime import datetime, timedelta, timezone
 
-from common import DEFAULT_ROLLING_WINDOW_DAYS, MAX_PAGES_PER_WAREHOUSE, require_env, supabase_upsert
+from common import DEFAULT_ROLLING_WINDOW_DAYS, MAX_PAGES_PER_WAREHOUSE, require_env, supabase_prune_missing, supabase_upsert
 from shipsen_family_common import fetch_paginated, login as sf_login
 
 BASE_URL = "https://api.mlshipafrica.app/api"
@@ -52,7 +52,7 @@ def get_reference_date(raw: dict, path: str) -> datetime | None:
         return None
 
 
-def sync_leads(token: str, window_start: datetime, max_pages: int, disable_early_stop: bool) -> int:
+def sync_leads(token: str, window_start: datetime, max_pages: int, disable_early_stop: bool) -> tuple[int, set[str]]:
     raw_orders = fetch_paginated(
         BASE_URL, "/orders/search", token, {}, window_start, max_pages,
         lambda o: get_reference_date(o, "/orders/search"), disable_early_stop,
@@ -91,10 +91,10 @@ def sync_leads(token: str, window_start: datetime, max_pages: int, disable_early
         )
 
     supabase_upsert("mlshipafrica_leads", rows)
-    return len(rows)
+    return len(rows), {r["mongo_id"] for r in rows if r.get("mongo_id")}
 
 
-def sync_shippings(token: str, window_start: datetime, max_pages: int, disable_early_stop: bool) -> int:
+def sync_shippings(token: str, window_start: datetime, max_pages: int, disable_early_stop: bool) -> tuple[int, set[str]]:
     raw_shippings = fetch_paginated(
         BASE_URL, "/shippings/search", token, {}, window_start, max_pages,
         lambda o: get_reference_date(o, "/shippings/search"), disable_early_stop,
@@ -138,7 +138,7 @@ def sync_shippings(token: str, window_start: datetime, max_pages: int, disable_e
         )
 
     supabase_upsert("mlshipafrica_orders", rows)
-    return len(rows)
+    return len(rows), {r["mongo_id"] for r in rows if r.get("mongo_id")}
 
 
 def parse_args() -> argparse.Namespace:
@@ -181,20 +181,29 @@ def main() -> None:
     had_error = False
     total_leads = 0
     total_shippings = 0
+    lead_ids: set[str] = set()
+    shipping_ids: set[str] = set()
 
     try:
-        total_leads = sync_leads(token, window_start, max_pages, disable_early_stop)
+        total_leads, lead_ids = sync_leads(token, window_start, max_pages, disable_early_stop)
         print(f"[OK] {total_leads} leads (depuis {window_start.date()})")
     except Exception as err:  # noqa: BLE001
         had_error = True
         print(f"[ERROR] leads: {err}", file=sys.stderr)
 
     try:
-        total_shippings = sync_shippings(token, window_start, max_pages, disable_early_stop)
+        total_shippings, shipping_ids = sync_shippings(token, window_start, max_pages, disable_early_stop)
         print(f"[OK] {total_shippings} shippings (depuis {window_start.date()})")
     except Exception as err:  # noqa: BLE001
         had_error = True
         print(f"[ERROR] shippings: {err}", file=sys.stderr)
+
+    # Nettoyage des lignes disparues côté source (incident réel 2026-08-05 : 92 leads "Unreached"
+    # jamais retirés par supabase_upsert, seul additif) — uniquement pour un --full-rescan réussi,
+    # voir common.supabase_prune_missing pour le garde-fou complet.
+    if args.full_rescan and not had_error:
+        supabase_prune_missing("mlshipafrica_leads", "mongo_id", lead_ids)
+        supabase_prune_missing("mlshipafrica_orders", "mongo_id", shipping_ids)
 
     print(f"[SUMMARY] leads={total_leads} shippings={total_shippings} finished_at={datetime.now(timezone.utc).isoformat()}")
     sys.exit(1 if had_error else 0)

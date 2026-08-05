@@ -28,7 +28,21 @@ export async function GET(request: Request) {
       headers: { Authorization: `Bearer ${process.env.REPORTING_API_KEY}` },
       cache: "no-store",
     });
-    const data = await res.json();
+
+    // Le CRM Voralis peut répondre par une page d'erreur HTML (timeout, passerelle 502/504,
+    // blocage Cloudflare) plutôt que du JSON — .json() planterait alors avec une exception
+    // opaque ("Unexpected token <"), remontée telle quelle au navigateur. On lit le texte
+    // d'abord pour renvoyer une erreur JSON propre et diagnosticable dans tous les cas.
+    const text = await res.text();
+    let data: { success?: boolean; message?: string; orders?: unknown[]; total?: number };
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return Response.json(
+        { success: false, message: `CRM Voralis a répondu avec un contenu non-JSON (HTTP ${res.status}) : ${text.slice(0, 300)}` },
+        { status: 502 }
+      );
+    }
     if (!data.success) return Response.json(data, { status: res.status });
 
     const batch = (data.orders ?? []) as unknown[];

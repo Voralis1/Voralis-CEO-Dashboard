@@ -291,13 +291,17 @@ def sync_country(
     disable_early_stop: bool = False,
     relogin: Callable[[], str] | None = None,
     upsert_fn: Callable[[str, list[dict]], None] = None,  # injecté par l'appelant (supabase_upsert)
-) -> int:
+) -> tuple[int, set[str]]:
     """Récupère + mappe + upsert les commandes d'un pays. map_row(order, country) -> row|None
     (None pour ignorer une commande hors fenêtre ou incomplète) — spécifique à chaque réseau,
     voir sync_clickmarket.py / sync_coliscod.py / sync_africod_congo.py. relogin (optionnel) :
     callback sans argument qui refait un login et renvoie un nouveau token, utilisé si l'API
     répond 401 en cours de scan (voir fetch_orders_page) — indispensable pour --full-rescan, dont
-    la durée dépasse la durée de vie du token (incident réel constaté sur Coliscod le 2026-07-31)."""
+    la durée dépasse la durée de vie du token (incident réel constaté sur Coliscod le 2026-07-31).
+
+    Retourne (nombre de lignes, ids récupérés) — le 2e élément sert au nettoyage post-rescan
+    (voir common.supabase_prune_missing, appelé par l'appelant après avoir accumulé les ids de
+    TOUS les pays, jamais pays par pays isolément)."""
     raw_orders = fetch_orders_window(
         base_url,
         token,
@@ -317,4 +321,4 @@ def sync_country(
         if row is not None:
             rows.append(row)
     upsert_fn(table, rows)
-    return len(rows)
+    return len(rows), {r["order_id"] for r in rows if r.get("order_id")}

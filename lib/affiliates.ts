@@ -72,7 +72,15 @@ function buildFxByCurrency(marketSettingsList: MarketSettings[]): Map<string, nu
 
 async function fetchCrmOrders(status: string): Promise<CrmOrderRow[]> {
   const res = await fetch(`/api/orders?status=${status}`);
-  const json = await res.json();
+  // /api/orders peut répondre par une page d'erreur non-JSON en cas de crash serveur — .json()
+  // planterait alors avec "Unexpected token <"/"unexpected character…", opaque pour l'utilisateur.
+  const text = await res.text();
+  let json: { success?: boolean; message?: string; orders?: unknown[] };
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`Réponse invalide de /api/orders (HTTP ${res.status}) — voir les logs serveur.`);
+  }
   if (!json.success) throw new Error(json.message ?? "Erreur CRM Voralis (commandes)");
   return (json.orders ?? []) as CrmOrderRow[];
 }

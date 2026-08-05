@@ -18,7 +18,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 from africacod_common import sync_country, login as af_login
-from common import DEFAULT_ROLLING_WINDOW_DAYS, MAX_PAGES_PER_WAREHOUSE, require_env, supabase_upsert
+from common import DEFAULT_ROLLING_WINDOW_DAYS, MAX_PAGES_PER_WAREHOUSE, require_env, supabase_prune_missing, supabase_upsert
 
 BASE_URL = "https://clickmarket-backend-8scjo.ondigitalocean.app/api"
 
@@ -117,10 +117,11 @@ def main() -> None:
 
     total = 0
     had_error = False
+    all_ids: set[str] = set()
 
     for country in countries:
         try:
-            n = sync_country(
+            n, ids = sync_country(
                 base_url=BASE_URL,
                 table="clickmarket_leads",
                 token=token,
@@ -133,10 +134,18 @@ def main() -> None:
                 upsert_fn=supabase_upsert,
             )
             total += n
+            all_ids |= ids
             print(f"[OK] {country['name']}: {n} leads (depuis {window_start})")
         except Exception as err:  # noqa: BLE001 — une erreur sur un pays ne doit pas arrêter les autres
             had_error = True
             print(f"[ERROR] {country['name']}: {err}", file=sys.stderr)
+
+    # Nettoyage des lignes disparues côté source — UNIQUEMENT pour un --full-rescan réussi (tous
+    # pays confondus, sans erreur) : c'est le seul cas où all_ids représente fidèlement tout
+    # l'historique. Jamais pendant --since (fenêtre volontairement partielle) ni la synchro rapide
+    # régulière (fenêtre glissante de quelques jours seulement).
+    if args.full_rescan and not had_error:
+        supabase_prune_missing("clickmarket_leads", "order_id", all_ids)
 
     print(f"[SUMMARY] leads={total} finished_at={datetime.now(timezone.utc).isoformat()}")
     sys.exit(1 if had_error else 0)

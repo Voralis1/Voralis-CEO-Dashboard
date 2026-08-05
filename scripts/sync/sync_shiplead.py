@@ -20,7 +20,7 @@ import argparse
 import sys
 from datetime import datetime, timedelta, timezone
 
-from common import DEFAULT_ROLLING_WINDOW_DAYS, MAX_PAGES_PER_WAREHOUSE, require_env, supabase_upsert
+from common import DEFAULT_ROLLING_WINDOW_DAYS, MAX_PAGES_PER_WAREHOUSE, require_env, supabase_prune_missing, supabase_upsert
 from shipsen_family_common import fetch_paginated, login as sf_login
 
 BASE_URL = "https://api.myshiplead.com"
@@ -36,7 +36,7 @@ def get_reference_date(raw: dict, path: str) -> datetime | None:
         return None
 
 
-def sync_leads(warehouse: dict, token: str, window_start: datetime, max_pages: int, disable_early_stop: bool) -> int:
+def sync_leads(warehouse: dict, token: str, window_start: datetime, max_pages: int, disable_early_stop: bool) -> tuple[int, set[str]]:
     raw_orders = fetch_paginated(
         BASE_URL, "/orders/search", token, {"warehouse": warehouse["_id"]}, window_start, max_pages,
         lambda o: get_reference_date(o, "/orders/search"), disable_early_stop,
@@ -74,10 +74,10 @@ def sync_leads(warehouse: dict, token: str, window_start: datetime, max_pages: i
         )
 
     supabase_upsert("shiplead_leads", rows)
-    return len(rows)
+    return len(rows), {r["mongo_id"] for r in rows if r.get("mongo_id")}
 
 
-def sync_shippings(warehouse: dict, token: str, window_start: datetime, max_pages: int, disable_early_stop: bool) -> int:
+def sync_shippings(warehouse: dict, token: str, window_start: datetime, max_pages: int, disable_early_stop: bool) -> tuple[int, set[str]]:
     raw_shippings = fetch_paginated(
         BASE_URL, "/shippings/search", token, {"warehouse": warehouse["_id"]}, window_start, max_pages,
         lambda o: get_reference_date(o, "/shippings/search"), disable_early_stop,
@@ -121,7 +121,7 @@ def sync_shippings(warehouse: dict, token: str, window_start: datetime, max_page
         )
 
     supabase_upsert("shiplead_orders", rows)
-    return len(rows)
+    return len(rows), {r["mongo_id"] for r in rows if r.get("mongo_id")}
 
 
 def parse_args() -> argparse.Namespace:
@@ -171,24 +171,35 @@ def main() -> None:
     total_leads = 0
     total_shippings = 0
     had_error = False
+    all_lead_ids: set[str] = set()
+    all_shipping_ids: set[str] = set()
 
     for wh in warehouses:
         name = wh.get("name") or wh.get("_id")
         try:
-            n = sync_leads(wh, token, window_start, max_pages, disable_early_stop)
+            n, ids = sync_leads(wh, token, window_start, max_pages, disable_early_stop)
             total_leads += n
+            all_lead_ids |= ids
             print(f"[OK] {name}: {n} leads (depuis {window_start.date()})")
         except Exception as err:  # noqa: BLE001 — une erreur sur un entrepôt ne doit pas arrêter les autres
             had_error = True
             print(f"[ERROR] {name} (leads): {err}", file=sys.stderr)
 
         try:
-            n = sync_shippings(wh, token, window_start, max_pages, disable_early_stop)
+            n, ids = sync_shippings(wh, token, window_start, max_pages, disable_early_stop)
             total_shippings += n
+            all_shipping_ids |= ids
             print(f"[OK] {name}: {n} shippings (depuis {window_start.date()})")
         except Exception as err:  # noqa: BLE001
             had_error = True
             print(f"[ERROR] {name} (shippings): {err}", file=sys.stderr)
+
+    # Nettoyage — uniquement pour un --full-rescan réussi (tous entrepôts confondus, sans erreur),
+    # voir common.supabase_prune_missing pour le raisonnement complet (incident MLShipAfrica,
+    # 2026-08-05).
+    if args.full_rescan and not had_error:
+        supabase_prune_missing("shiplead_leads", "mongo_id", all_lead_ids)
+        supabase_prune_missing("shiplead_orders", "mongo_id", all_shipping_ids)
 
     print(f"[SUMMARY] leads={total_leads} shippings={total_shippings} finished_at={datetime.now(timezone.utc).isoformat()}")
     sys.exit(1 if had_error else 0)

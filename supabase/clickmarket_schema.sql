@@ -137,6 +137,16 @@ group by country_id;
 --                       fenêtre, 183 vs 195 sur une autre — created_at systématiquement plus
 --                       proche/exact). taux_confirmation et taux_livraison utilisent maintenant
 --                       ce total_leads (created_at) comme dénominateur.
+--                       ⚠️ Résolu (2026-08-05) : le cas "18 vs 21" ci-dessus n'était PAS un
+--                       artefact de frontière — vérifié en direct en re-scannant /orders-paginated
+--                       de bout en bout (10221 commandes, Gabon+Congo) : exactement 18 commandes
+--                       en juillet 2026 par order_date ET par created_at, identique à notre table.
+--                       Le widget natif "Total Commandes" en mode "Last Month" n'affiche PAS le
+--                       mois calendaire fixe (01-31) mais une fenêtre GLISSANTE se terminant à la
+--                       date de consultation du widget (son graphique journalier va du 30/06 au
+--                       10/07 et somme exactement à 21) — donc pas la même période que notre
+--                       "Mois dernier" (01/07-31/07 fixe). Comparer les deux nécessite de choisir
+--                       une plage personnalisée identique des deux côtés, pas les préréglages.
 --   - delai_1er_contact_heures (2026-07-14) : approximation demandée par le CEO. Formule =
 --                       moyenne de (coalesce(last_unreached_date, confirmed_at) - order_created_at)
 --                       en heures, UNIQUEMENT sur les commandes où no_answer_count <= 1 (0 = 1er

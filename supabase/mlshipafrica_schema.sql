@@ -49,6 +49,22 @@ create policy "Allow read for authenticated users"
 
 -- KPI par marché filtré par période — basé sur kpi_shipsen_marche_periode, avec doublons
 -- réellement calculé (status_name='double') et retournees sur status='return' (pas 'refunded').
+--
+-- ⚠️ total_orders CORRIGÉ (2026-08-05) : copié initialement de Shipsen (confirmed_orders +
+-- cancelled_orders, PAS un count(*) de tous les leads créés — voir shipsen_schema.sql ligne 237,
+-- décision CEO du 2026-07-31 pour matcher EXACTEMENT le widget natif Shipsen "Total Orders", qui
+-- exclut lui-même les commandes en attente). Cette hypothèse ne tenait PAS pour MLShipAfrica :
+-- vérifié en direct le 2026-08-05 (rescan complet + comparaison au widget natif MLShipAfrica,
+-- filtre 01/07-31/07/2026) — le widget natif "TOTAL ORDERS" affichait 340, notre ancien calcul
+-- (confirmées+annulées) donnait 209, alors qu'un vrai count(*) de tous les leads créés (order_date
+-- dans la fenêtre, tout statut confondu, y compris en attente/injoignables) donne 372 — bien plus
+-- proche du widget natif que 209 (écart résiduel probable du même type que celui documenté pour
+-- ClickMarket : le préréglage natif n'est pas forcément calé sur un mois calendaire strict).
+-- total_orders repasse donc sur le même modèle que ClickMarket/Coliscod/Africod Congo : count(*)
+-- de tous les leads créés sur la période, en attente incluse — confirmation_rate et
+-- taux_livraison utilisent désormais ce total_orders (order_date) comme dénominateur, plus
+-- confirmed_orders+cancelled_orders. Ne PAS reporter cette correction sur Shipsen : pour Shipsen
+-- spécifiquement, confirmed+cancelled reste le bon calcul (vérifié, demandé par le CEO).
 drop function if exists kpi_mlshipafrica_marche_periode(date, date);
 create or replace function kpi_mlshipafrica_marche_periode(date_from date, date_to date)
 returns table (
@@ -78,6 +94,7 @@ as $$
     select
       country,
       max(currency) as currency,
+      count(*) as total_orders,
       count(*) filter (where status_name = 'double') as doublons,
       count(*) filter (where status_name not in ('Confirmed', 'Cancelled', 'double')) as pending_orders,
       round(
@@ -132,10 +149,10 @@ as $$
   select
     coalesce(l.country, c.country, x.country, r.country) as country,
     coalesce(l.currency, r.currency) as currency,
-    coalesce(c.confirmed_orders, 0) + coalesce(c.cancelled_orders, 0) as total_orders,
+    coalesce(l.total_orders, 0) as total_orders,
     coalesce(c.confirmed_orders, 0) as confirmed_orders,
     round(
-      100.0 * coalesce(c.confirmed_orders, 0) / nullif(coalesce(c.confirmed_orders, 0) + coalesce(c.cancelled_orders, 0), 0),
+      100.0 * coalesce(c.confirmed_orders, 0) / nullif(coalesce(l.total_orders, 0), 0),
       1
     ) as confirmation_rate,
     coalesce(c.revenue_confirmed, 0) as revenue_confirmed,
@@ -149,7 +166,7 @@ as $$
     coalesce(x.retournees, 0) as retournees,
     coalesce(r.livres, 0) as livres,
     round(
-      100.0 * coalesce(r.livres, 0) / nullif(coalesce(c.confirmed_orders, 0) + coalesce(c.cancelled_orders, 0), 0),
+      100.0 * coalesce(r.livres, 0) / nullif(coalesce(l.total_orders, 0), 0),
       1
     ) as taux_livraison,
     l.delai_1er_contact_heures

@@ -93,3 +93,73 @@ def supabase_upsert(table: str, rows: list[dict], on_conflict: str | None = None
         )
         if not res.ok:
             print(f"[ERROR] Upsert {table} (lot {i}-{i + len(batch)}) → HTTP {res.status_code}: {res.text[:500]}", file=sys.stderr)
+
+
+def supabase_prune_missing(table: str, pk_column: str, live_ids: set[str], min_retention_ratio: float = 0.8) -> int:
+    """Supprime les lignes de `table` dont `pk_column` n'apparaît plus dans `live_ids` — le
+    complément de supabase_upsert (qui n'ajoute/ne met à jour que, jamais ne supprime). À
+    n'appeler QU'après un scan complet réussi (--full-rescan, disable_early_stop=True, aucun
+    plafond de pages limitant réellement atteint) : c'est le seul cas où live_ids représente
+    fidèlement TOUT ce qui existe côté source, donc où "absent de live_ids" veut vraiment dire
+    "supprimé/fusionné côté source" plutôt que "juste hors de la fenêtre scannée".
+
+    Incident réel (2026-08-05, MLShipAfrica) : 92 lignes "Unreached" disparues du côté source
+    (probablement nettoyées par la plateforme) sont restées en base indéfiniment, gonflant les
+    totaux affichés (372 vs 352 réel sur juillet) — supabase_upsert ne les aurait jamais retirées
+    de lui-même, d'où cette fonction.
+
+    Garde-fou (même raisonnement que l'incident Africod Congo du 2026-07-31, early-stop jitter
+    ayant tronqué un scan à 12086/40273 lignes) : si live_ids représente moins de
+    min_retention_ratio du total actuellement en base, on ABANDONNE le nettoyage plutôt que de
+    supprimer massivement des lignes valides à cause d'un scan incomplet (page cap atteint,
+    timeout réseau à mi-scan, etc.) — mieux vaut une base légèrement en surplus qu'une purge
+    erronée irréversible."""
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        print("[FATAL] NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY manquants dans .env", file=sys.stderr)
+        sys.exit(1)
+
+    headers = {"apikey": SUPABASE_SERVICE_ROLE_KEY, "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}"}
+    all_ids: list[str] = []
+    offset = 0
+    while True:
+        page_headers = {**headers, "Range": f"{offset}-{offset + 999}"}
+        res = requests.get(f"{SUPABASE_URL}/rest/v1/{table}", headers=page_headers, params={"select": pk_column}, timeout=30)
+        if not res.ok:
+            print(f"[ERROR] Lecture {table} pour nettoyage (offset {offset}) → HTTP {res.status_code}: {res.text[:300]}", file=sys.stderr)
+            return 0
+        batch = res.json()
+        if not batch:
+            break
+        all_ids.extend(row[pk_column] for row in batch)
+        if len(batch) < 1000:
+            break
+        offset += 1000
+
+    current_total = len(all_ids)
+    if current_total == 0:
+        return 0
+    if len(live_ids) < current_total * min_retention_ratio:
+        print(
+            f"[SKIP PRUNE] {table}: scan complet ({len(live_ids)} lignes) < {min_retention_ratio * 100:.0f}% "
+            f"de la base actuelle ({current_total}) — scan probablement incomplet, aucune suppression."
+        )
+        return 0
+
+    stale = set(all_ids) - live_ids
+    if not stale:
+        return 0
+
+    deleted = 0
+    stale_list = list(stale)
+    delete_batch_size = 200  # IDs passés dans l'URL (in.(...)) — reste sous les limites de longueur d'URL usuelles
+    for i in range(0, len(stale_list), delete_batch_size):
+        batch = stale_list[i : i + delete_batch_size]
+        ids_param = ",".join(batch)
+        res = requests.delete(f"{SUPABASE_URL}/rest/v1/{table}", headers=headers, params={pk_column: f"in.({ids_param})"}, timeout=30)
+        if res.ok:
+            deleted += len(batch)
+        else:
+            print(f"[ERROR] Suppression {table} (lot {i}-{i + len(batch)}) → HTTP {res.status_code}: {res.text[:300]}", file=sys.stderr)
+
+    print(f"[PRUNE] {table}: {deleted} ligne(s) obsolète(s) supprimée(s) (absente(s) du scan complet).")
+    return deleted

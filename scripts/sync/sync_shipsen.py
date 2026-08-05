@@ -34,6 +34,7 @@ from common import (
     DEFAULT_ROLLING_WINDOW_DAYS,
     MAX_PAGES_PER_WAREHOUSE,
     require_env,
+    supabase_prune_missing,
     supabase_upsert,
 )
 
@@ -136,7 +137,7 @@ def sync_leads(
     window_start: datetime,
     max_pages: int = MAX_PAGES_PER_WAREHOUSE,
     disable_early_stop: bool = False,
-) -> int:
+) -> tuple[int, set[str]]:
     raw_orders = fetch_paginated(
         "/orders/search", warehouse["warehouse"], token, window_start, max_pages, disable_early_stop
     )
@@ -175,7 +176,7 @@ def sync_leads(
         )
 
     supabase_upsert("shipsen_leads", rows)
-    return len(rows)
+    return len(rows), {r["mongo_id"] for r in rows if r.get("mongo_id")}
 
 
 def sync_shippings(
@@ -184,7 +185,7 @@ def sync_shippings(
     window_start: datetime,
     max_pages: int = MAX_PAGES_PER_WAREHOUSE,
     disable_early_stop: bool = False,
-) -> int:
+) -> tuple[int, set[str]]:
     raw_shippings = fetch_paginated(
         "/shippings/search", warehouse["warehouse"], token, window_start, max_pages, disable_early_stop
     )
@@ -227,7 +228,7 @@ def sync_shippings(
         )
 
     supabase_upsert("shipsen_orders", rows)
-    return len(rows)
+    return len(rows), {r["mongo_id"] for r in rows if r.get("mongo_id")}
 
 
 def parse_args() -> argparse.Namespace:
@@ -295,23 +296,34 @@ def main() -> None:
     total_leads = 0
     total_shippings = 0
     had_error = False
+    all_lead_ids: set[str] = set()
+    all_shipping_ids: set[str] = set()
 
     for wh in WAREHOUSES:
         try:
-            n = sync_leads(wh, token, window_start, max_pages, disable_early_stop)
+            n, ids = sync_leads(wh, token, window_start, max_pages, disable_early_stop)
             total_leads += n
+            all_lead_ids |= ids
             print(f"[OK] {wh['country']}: {n} leads (depuis {window_start.date()})")
         except Exception as err:  # noqa: BLE001 — une erreur sur un pays ne doit pas arrêter les autres
             had_error = True
             print(f"[ERROR] {wh['country']} (leads): {err}", file=sys.stderr)
 
         try:
-            n = sync_shippings(wh, token, window_start, max_pages, disable_early_stop)
+            n, ids = sync_shippings(wh, token, window_start, max_pages, disable_early_stop)
             total_shippings += n
+            all_shipping_ids |= ids
             print(f"[OK] {wh['country']}: {n} shippings (depuis {window_start.date()})")
         except Exception as err:  # noqa: BLE001
             had_error = True
             print(f"[ERROR] {wh['country']} (shippings): {err}", file=sys.stderr)
+
+    # Nettoyage — uniquement pour un --full-rescan réussi (tous entrepôts confondus, sans erreur),
+    # voir common.supabase_prune_missing pour le raisonnement complet (incident MLShipAfrica,
+    # 2026-08-05).
+    if args.full_rescan and not had_error:
+        supabase_prune_missing("shipsen_leads", "mongo_id", all_lead_ids)
+        supabase_prune_missing("shipsen_orders", "mongo_id", all_shipping_ids)
 
     print(f"[SUMMARY] leads={total_leads} shippings={total_shippings} finished_at={datetime.now(timezone.utc).isoformat()}")
     sys.exit(1 if had_error else 0)
