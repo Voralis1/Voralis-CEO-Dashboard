@@ -37,6 +37,13 @@ export const CANONICAL_COUNTRIES: CanonicalCountry[] = [
   // montants déjà stockés en XOF (voir la migration pour le détail complet de ce compromis).
   { name: "Cameroun", currency: "XAF", flag: "🇨🇲", aliases: ["Cameroun", "Cameroon", "CM", "CMR"] },
   { name: "Argentine", currency: "XOF", flag: "🇦🇷", aliases: ["Argentine", "Argentina", "AR", "ARG"] },
+  // Ajouté 2026-08-04 : apparu via le CRM Voralis (commandes affiliées, /api/v1/reports/orders)
+  // avec un volume réel (480+ commandes) — vraie devise XAF (zone CEMAC, comme Cameroun/Congo/
+  // Gabon, pas un compromis comme Argentine ci-dessus). Politique CEO (2026-08-04) : tout nouveau
+  // pays avec un volume de commandes réel doit être pris en compte immédiatement, sans attendre
+  // une validation — voir lib/affiliates.ts pour la conversion USD qui réutilise le taux XAF déjà
+  // configuré pour Cameroun/Congo/Gabon plutôt que d'exiger un market_settings dédié.
+  { name: "Centrafrique", currency: "XAF", flag: "🇨🇫", aliases: ["Centrafrique", "République centrafricaine", "RCA", "CF", "CAF"] },
 ];
 
 const aliasToCanonical = new Map<string, CanonicalCountry>();

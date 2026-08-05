@@ -6,7 +6,7 @@ import { useFilters } from "@/lib/filters";
 import { fmtCurrency } from "@/lib/dashboardData";
 import { COUNTRY_FLAGS } from "@/lib/countries";
 import type { ThresholdRow, TrafficColor } from "@/lib/thresholds";
-import { AlertTriangle, Loader2, Info, Lock } from "lucide-react";
+import { AlertTriangle, Loader2, Lock } from "lucide-react";
 
 type PublicRow = Omit<ThresholdRow, "ceoDetail">;
 
@@ -26,15 +26,14 @@ function ColorBadge({ color }: { color: TrafficColor | null }) {
   return <Badge variant={c.variant}>{c.label}</Badge>;
 }
 
+// Même convention que ColorBadge ci-dessus (et que /ceo/crm-voralis) : un tiret + info-bulle,
+// pas un badge orange "seuils indisponibles" — la plupart du temps ce n'est pas une panne, juste
+// pas encore assez de données réelles sur la période pour calculer un seuil fiable.
 function MissingBanner({ missingFields }: { missingFields: string[] }) {
   if (missingFields.length === 0) return null;
   return (
-    <span
-      title={`Champs manquants : ${missingFields.join(", ")}`}
-      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200 cursor-help"
-    >
-      <Info size={10} />
-      seuils indisponibles
+    <span className="text-slate-400 text-xs cursor-help" title={`Champs manquants : ${missingFields.join(", ")}`}>
+      —
     </span>
   );
 }
@@ -186,7 +185,7 @@ export default function ThresholdsPage() {
                     </td>
                     <td className="px-3 py-3 text-slate-700">{r.cplBreakEvenUsd != null ? fmtUsd(r.cplBreakEvenUsd) : "—"}</td>
                     <td className="px-3 py-3 text-slate-700">
-                      {r.cplReelUsd != null ? fmtUsd(r.cplReelUsd) : <span className="text-slate-400">aucune donnée</span>}
+                      {r.cplReelUsd != null ? fmtUsd(r.cplReelUsd) : "—"}
                     </td>
                     <td className="px-3 py-3">
                       <ColorBadge color={r.cplColor} />
@@ -228,7 +227,7 @@ export default function ThresholdsPage() {
                     </td>
                     <td className="px-3 py-3 text-slate-700">{r.payoutBreakEvenUsd != null ? fmtUsd(r.payoutBreakEvenUsd) : "—"}</td>
                     <td className="px-3 py-3 text-slate-700">
-                      {r.payoutReelUsd != null ? fmtUsd(r.payoutReelUsd) : <span className="text-slate-400">aucune donnée</span>}
+                      {r.payoutReelUsd != null ? fmtUsd(r.payoutReelUsd) : "—"}
                     </td>
                     <td className="px-3 py-3">
                       <ColorBadge color={r.payoutColor} />

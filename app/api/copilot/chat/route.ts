@@ -59,6 +59,13 @@ RÈGLES ABSOLUES :
    au moins impactant), puis descends dans l'ordre. Ne mentionne pas tous les marchés si un seul
    domine le goulot actuel — la valeur du copilote est de trancher, pas de tout lister.
 5. ${gatingClause}
+6. FORMAT : la bulle de chat ne rend QUE "**gras**" (mis en évidence à l'écran) — utilise-le pour
+   les chiffres clés et les actions à retenir, sans en abuser (2-3 par réponse maximum). Rajoute
+   1-2 émojis pertinents pour repérer les points d'un coup d'œil (🎯 objectif, 🔴/🟠/🟢 signal
+   scale/surveiller/stop, 📉 baisse, ⚠️ risque, ✅ action faite) — jamais plus d'un par ligne, ne
+   remplace jamais un chiffre. Tout le reste du Markdown (titres "#", *italique*, blocs de code
+   entre backticks, tableaux) s'affiche de façon cassée à l'écran : ne les utilise JAMAIS. Structure
+   avec des sauts de ligne et, si besoin d'une liste, des tirets simples ("- ") en début de ligne.
 
 Sois concis : un CEO ou un membre d'équipe lit ça entre deux réunions, pas un rapport.`;
 }

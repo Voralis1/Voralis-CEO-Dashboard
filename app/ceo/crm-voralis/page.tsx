@@ -5,7 +5,7 @@ import { Section, Badge } from "@/components/ui";
 import { useFilters } from "@/lib/filters";
 import { fetchAffiliatesData, type AffiliateRow, type CountryAffiliateRow, type AffiliatesData } from "@/lib/affiliates";
 import { fmtCurrency } from "@/lib/dashboardData";
-import { AlertTriangle, Loader2, Info, ArrowUpDown } from "lucide-react";
+import { AlertTriangle, Loader2, ArrowUpDown } from "lucide-react";
 
 type AffiliateSortKey = "payoutPerConfirmedUsd" | "drPct" | "deliveredOrders" | "totalPayoutUsd";
 
@@ -16,14 +16,14 @@ function fmtUsd(value: number): string {
   return `$${value.toLocaleString("fr-FR", { maximumFractionDigits: 2 })}`;
 }
 
+// Même convention que les colonnes DR%/Coût payout de cette page (un simple tiret + info-bulle) —
+// pas un badge orange "incomplète" : dans l'immense majorité des cas ce n'est pas une panne, juste
+// rien à calculer sur cette période (ex. aucune commande livrée), pas la peine de le présenter
+// comme un problème du dashboard.
 function GapCell({ text }: { text: string }) {
   return (
-    <span
-      title={text}
-      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200 cursor-help"
-    >
-      <Info size={10} />
-      incomplète
+    <span className="text-slate-400 cursor-help" title={text}>
+      —
     </span>
   );
 }
@@ -196,8 +196,27 @@ export default function CrmVoralisPage() {
                           <span className="text-slate-400" title="Aucune commande confirmée sur cette période">—</span>
                         )}
                       </td>
-                      <td className="px-3 py-3">
-                        <GapCell text="CA livré encaissé non exposé par le CRM pour cet affilié — rentabilité non calculable." />
+                      <td className="px-3 py-3 font-semibold">
+                        {r.margeNetteUsd != null ? (
+                          <span
+                            className={r.margeNetteUsd >= 0 ? "text-emerald-600" : "text-red-600"}
+                            title={
+                              r.caLivreCurrency
+                                ? `CA livré : ${fmtCurrency(r.caLivreLocal ?? 0, r.caLivreCurrency)} converti en USD − payout total.`
+                                : "CA livré (plusieurs devises pour cet affilié, agrégé directement en USD commande par commande) − payout total."
+                            }
+                          >
+                            {fmtUsd(r.margeNetteUsd)}
+                          </span>
+                        ) : (
+                          <GapCell
+                            text={
+                              r.deliveredOrders > 0
+                                ? "Commande(s) livrée(s) dans une devise sans taux de change connu — marge non calculable."
+                                : "Aucune commande livrée sur cette période — marge non calculable."
+                            }
+                          />
+                        )}
                       </td>
                     </tr>
                   );

@@ -17,6 +17,25 @@ interface BottleneckSummary {
   angleMortObjectif: string | null;
 }
 
+// Rendu minimal du Markdown renvoyé par le copilote (app/api/copilot/chat/route.ts) : la bulle
+// de chat n'a pas de moteur Markdown complet, donc "**gras**" doit être transformé en <strong>
+// plutôt que simplement supprimé (sinon l'emphase voulue par le modèle disparaît). Le reste
+// (titres "#", code entre backticks, italique isolé) est nettoyé car rien ne les distingue
+// visuellement dans une bulle de chat simple — ils resteraient soit littéraux, soit inutiles.
+function renderAssistantContent(text: string) {
+  const cleaned = text
+    .replace(/^#{1,6}\s+/gm, "") // titres "# "/"## "...
+    .replace(/`{1,3}([^`]+?)`{1,3}/g, "$1") // `code`/```code```
+    .replace(/^\s*[-*]\s+/gm, "- "); // uniformise les puces en tiret simple
+
+  return cleaned.split(/(\*\*.+?\*\*)/g).map((part, i) => {
+    const bold = part.match(/^\*\*(.+)\*\*$/);
+    if (bold) return <strong key={i}>{bold[1]}</strong>;
+    // *italique* isolé (jamais demandé au modèle) — nettoyé plutôt que laissé littéral.
+    return <span key={i}>{part.replace(/(?<!\w)\*(?!\s)(.+?)(?<!\s)\*(?!\w)/g, "$1")}</span>;
+  });
+}
+
 const SUGGESTIONS = [
   "Où est le plus gros goulot en ce moment ?",
   "Que dois-je faire aujourd'hui pour me rapprocher de 50 livraisons rentables/jour ?",
@@ -139,7 +158,7 @@ export default function CopilotPage() {
                       m.role === "user" ? "bg-sidebar-700 text-white" : "bg-slate-100 text-slate-800"
                     }`}
                   >
-                    {m.content}
+                    {m.role === "assistant" ? renderAssistantContent(m.content) : m.content}
                   </div>
                   {m.role === "user" && (
                     <div className="w-7 h-7 rounded-full bg-slate-200 flex items-center justify-center shrink-0">
