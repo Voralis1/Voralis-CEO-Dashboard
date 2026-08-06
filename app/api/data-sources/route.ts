@@ -87,6 +87,12 @@ export async function GET() {
     checkTable("coliscod", "Coliscod Angola", "coliscod_leads", "synced_at"),
     checkTable("africod-congo", "Africod Congo", "africod_congo_leads", "synced_at"),
     checkTable("clickmarket", "ClickMarket", "clickmarket_leads", "synced_at"),
+    // ShipLead/MLShipAfrica/Ikatchiexpress (2026-08-04) — table "leads" (funnel) pour les deux
+    // premiers, comme clickmarket_leads/coliscod_leads ; Ikatchiexpress n'a qu'une seule table
+    // (pas de split leads/shippings), voir supabase/ikatchiexpress_schema.sql.
+    checkTable("shiplead", "ShipLead", "shiplead_leads", "synced_at"),
+    checkTable("mlshipafrica", "MLShipAfrica", "mlshipafrica_leads", "synced_at"),
+    checkTable("ikatchiexpress", "Ikatchiexpress", "ikatchiexpress_orders", "synced_at"),
     checkCrmVoralis(),
   ]);
 

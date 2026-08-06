@@ -55,7 +55,7 @@ export default function ConnectionsPage() {
 
   return (
     <div>
-      <Topbar title="Sources de données" subtitle="Statut du pipeline · n8n → Supabase → Next.js" />
+      <Topbar title="Sources de données" subtitle="Statut du pipeline · scripts Python → Supabase → Next.js" />
 
       <div className="px-6 py-5 space-y-5">
         {error && (
@@ -90,7 +90,7 @@ export default function ConnectionsPage() {
 
             {/* Sources grid */}
             <Section title="Sources de données · statut temps réel">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 {sources.map((src) => {
                   const cfg = statusConfig[src.status];
                   const Icon = cfg.icon;
@@ -124,23 +124,28 @@ export default function ConnectionsPage() {
         <Section title="Architecture technique · pipeline de données">
           <div className="font-mono text-xs text-slate-500 bg-white rounded-xl p-5 border border-slate-200 leading-6 overflow-x-auto">
             <pre>{`
-SOURCES                          ORCHESTRATEUR           BASE DE DONNÉES
-─────────────────────────────    ──────────────────      ──────────────────────
-Meta Ads API           ────┐     n8n (self-hosted)       Supabase PostgreSQL
-Shipsen (4 warehouses) ────┤     Workflows par source ──► meta_ads_by_country
-Coliscod Angola        ────┤ ──► login + pagination         shipsen_orders
-Africod Congo          ────┤     upsert par lots               coliscod_leads
-ClickMarket            ────┘     Cron (30 min)                 africod_congo_leads
-CRM Voralis (proxy) ─────────────────────────────►              clickmarket_leads
-                                                          Vues / RPC par réseau :
-                                                          kpi_<réseau>_marche_periode
-                                                          shipsen_kpi_by_country
+SOURCES                          ORCHESTRATEUR              BASE DE DONNÉES
+─────────────────────────────    ──────────────────         ──────────────────────
+Meta Ads API           ────┐     Scripts Python (cron /     Supabase PostgreSQL
+Shipsen (4 warehouses) ────┤     GitHub Actions / pg_net)    meta_ads_by_country
+Coliscod Angola         ────┤ ──► login + pagination           shipsen_orders / _leads
+Africod Congo           ────┤     fenêtre glissante courte      coliscod_leads
+ClickMarket             ────┤     upsert idempotent par lots     africod_congo_leads
+ShipLead                ────┤     (remplace n8n, 2026-07-29)      clickmarket_leads
+MLShipAfrica             ────┤                                      shiplead_leads/_orders
+Ikatchiexpress           ────┘                                       mlshipafrica_leads/_orders
+CRM Voralis (proxy) ──────────────────────────────►                    ikatchiexpress_orders
+                                                             Vues / RPC par réseau :
+                                                             kpi_<réseau>_marche_periode
+                                                             shipsen_kpi_by_country
                                  ▼
                          Supabase PostgREST (API REST auto) + RLS
                                  ▼
                          Next.js App Router
+                         /ceo/dashboard     → Vue d'ensemble
                          /ceo               → Trésorerie
                          /ceo/profitability → Rentabilité
+                         /ceo/logistics-cod → Réseaux Logistiques (7 réseaux)
                          /ceo/alerts        → Alertes (calculées en direct)
                          /ceo/connections   → Sources (statut en direct)
             `}</pre>
