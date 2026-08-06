@@ -17,7 +17,13 @@ import type { UserRole } from "@/lib/auth/role";
 // Trous de source STRUCTURELS (permanents, pas liés à la période sélectionnée) — le copilot et
 // les alertes doivent les signaler explicitement plutôt que de calculer sur un 0 implicite :
 export const STRUCTURAL_BLIND_SPOTS: string[] = [
-  "Délai avant le 1er contact commercial : aucune source connectée n'expose cette donnée (ni les réseaux COD, ni le CRM Voralis).",
+  // Nuancé le 2026-08-06 : delai_1er_contact_heures existe depuis le 2026-07-14 (colonne "Délai
+  // moyen 1er contact", voir Réseaux Logistiques / lib/providerKpi.ts) — ce n'est plus un vrai
+  // trou de donnée pour les réseaux COD, mais reste une APPROXIMATION biaisée : calculée
+  // uniquement sur les commandes réglées en 0 ou 1 tentative d'appel ratée (les réseaux ne
+  // gardent pas l'historique complet des tentatives, juste un compteur + la date de la dernière),
+  // donc probablement optimiste. Toujours totalement absent côté CRM Voralis (affiliés).
+  "Délai avant le 1er contact commercial : disponible en approximation pour les réseaux COD (colonne \"Délai moyen 1er contact\"), mais uniquement fiable sur les commandes réglées en 0 ou 1 tentative d'appel ratée — probablement optimiste. Toujours un angle mort total côté CRM Voralis (affiliés).",
   "Motifs d'annulation et de retour : aucun réseau ne catégorise ces motifs — seuls les comptages bruts (annulées, retournées) sont disponibles.",
 ];
 

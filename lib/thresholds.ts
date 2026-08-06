@@ -23,8 +23,8 @@ import type { MarketSettings } from "@/lib/marketSettings";
 // identique, seul le transport diffère.
 
 // Plafond de payout affilié (2026-07-14, décision CEO) : forfait fixe, plus calculé à partir de
-// dr_pct×(M-T) — voir computeThresholdRow.
-export const AFFILIATE_PAYOUT_MAX_USD = 9;
+// dr_pct×(M-T) — voir computeThresholdRow. Relevé de 9$ à 15$ le 2026-08-06 (décision CEO).
+export const AFFILIATE_PAYOUT_MAX_USD = 15;
 
 export interface ThresholdCeoDetail {
   M_local: number | null;

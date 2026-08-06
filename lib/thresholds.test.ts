@@ -56,11 +56,12 @@ describe("lib/thresholds — computeThresholdRow (marché témoin, avec frais de
     expect(row.cplMaxUsd).toBeCloseTo(0.1057, 4);
     expect(row.cplBreakEvenUsd).toBeCloseTo(0.7157, 4);
     expect(row.cplMaxLocal).toBeCloseTo(87.75, 3);
-    // Payout affiliés (2026-07-14) : forfait fixe de 9$ (AFFILIATE_PAYOUT_MAX_USD), plus calculé
-    // via dr_pct×(M-T) — break-even déduit par la même proportion que cplBreakEvenUsd/cplMaxUsd
-    // (= M_usd/(M_usd-T_usd) = (176/83)/(26/83) = 6.76923) : 9 * 6.76923 = 60.9231.
-    expect(row.payoutMaxUsd).toBeCloseTo(9, 4);
-    expect(row.payoutBreakEvenUsd).toBeCloseTo(60.9231, 4);
+    // Payout affiliés (2026-07-14, relevé de 9$ à 15$ le 2026-08-06) : forfait fixe de 15$
+    // (AFFILIATE_PAYOUT_MAX_USD), plus calculé via dr_pct×(M-T) — break-even déduit par la même
+    // proportion que cplBreakEvenUsd/cplMaxUsd (= M_usd/(M_usd-T_usd) = (176/83)/(26/83) =
+    // 6.76923) : 15 * 6.76923 = 101.5385.
+    expect(row.payoutMaxUsd).toBeCloseTo(15, 4);
+    expect(row.payoutBreakEvenUsd).toBeCloseTo(101.5385, 4);
 
     // Preuve que le frais de livraison n'est pas un ajustement mineur : sans les 13$ déduits,
     // M_usd serait ~15.1 (plus de 7x plus) — le COGS forfaitaire (12450 AOA) reste le même, seul

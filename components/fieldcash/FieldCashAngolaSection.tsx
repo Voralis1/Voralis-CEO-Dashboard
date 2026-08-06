@@ -39,7 +39,6 @@ export default function FieldCashAngolaSection() {
   }, [dateFrom, dateTo]);
 
   const currency = recap?.currency ?? "AOA";
-  const fmt = (v: number | null) => (v == null ? "donnée manquante" : fmtCurrency(v, currency));
 
   return (
     <div className="space-y-5">
@@ -65,6 +64,17 @@ export default function FieldCashAngolaSection() {
         </div>
       ) : recap ? (
         <>
+          {recap.missingParams && (
+            <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs">
+              <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+              <p>
+                <strong>Configuration manquante</strong> — aucune ligne <code>field_delivery_params</code> pour
+                l&apos;Angola : la devise n&apos;est pas confirmée, les montants ci-dessous sont affichés en{" "}
+                {currency} par défaut.
+              </p>
+            </div>
+          )}
+
           <div className="grid grid-cols-5 gap-4">
             <KpiCard
               label="Total encaissé"
@@ -72,7 +82,7 @@ export default function FieldCashAngolaSection() {
               icon={<Wallet size={14} />}
             />
             <KpiCard label="Livraisons collectées" value={recap.nbDeliveries.toLocaleString("fr-FR")} icon={<Truck size={14} />} />
-            <KpiCard label="Frais de livraison internes" value={fmt(recap.fraisLivraisonInterneTotal)} icon={<Fuel size={14} />} />
+            <KpiCard label="Frais de livraison internes" value={fmtCurrency(recap.fraisLivraisonInterneTotal, currency)} icon={<Fuel size={14} />} />
             <KpiCard label="Charges externes" value={fmtCurrency(recap.chargesExternesTotal, currency)} />
             <KpiCard
               label="Commission agent"
@@ -106,7 +116,7 @@ export default function FieldCashAngolaSection() {
                   Total encaissé − frais de livraison internes − charges externes − commission agent − remis (reçu)
                 </p>
               </div>
-              <p className="text-xl font-semibold text-emerald-700">{fmt(recap.cashDetenuRestant)}</p>
+              <p className="text-xl font-semibold text-emerald-700">{fmtCurrency(recap.cashDetenuRestant, currency)}</p>
             </div>
           </Section>
         </>
