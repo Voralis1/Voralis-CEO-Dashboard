@@ -45,15 +45,16 @@ export function computeProactiveAlerts(
 ): CopilotAlert[] {
   const alerts: CopilotAlert[] = [];
 
-  // 1) Délai 1er contact — angle mort PARTIEL (nuancé le 2026-08-06) : disponible en
-  // approximation côté réseaux COD (delai_1er_contact_heures), jamais un vrai seuil déclenché
-  // dessus car la mesure elle-même est biaisée (voir quoi/impact) — une seule carte informative
-  // stable, jamais dupliquée.
+  // 1) Délai 1er contact — angle mort PARTIEL (nuancé le 2026-08-06, message simplifié le
+  // 2026-08-06 sur demande CEO : le détail technique de la mesure — biais 0/1 tentative ratée —
+  // reste vrai (cf. commentaire STRUCTURAL_BLIND_SPOTS dans snapshot.ts) mais n'est plus affiché
+  // ici, seule la disponibilité par source l'est. Une seule carte informative stable, jamais
+  // dupliquée.
   alerts.push({
     id: "blind-spot-delai-premier-contact",
     level: "info",
     ou: "Toutes les marchés — étape confirmation",
-    quoi: "Le délai avant le 1er contact commercial est disponible en approximation pour les réseaux COD (colonne \"Délai moyen 1er contact\", Réseaux Logistiques) — mais uniquement fiable sur les commandes réglées en 0 ou 1 tentative d'appel ratée, donc probablement optimiste. Reste un angle mort total côté CRM Voralis (affiliés).",
+    quoi: "Le délai avant le 1er contact commercial est disponible en approximation uniquement via les applications des partenaires logistiques (colonne \"Délai moyen 1er contact\", Réseaux Logistiques).",
     impact: "Angle mort partiel — ne pas utiliser ce chiffre seul pour juger un réseau ou un marché, le croiser avec le taux de confirmation.",
     ceoOnly: false,
   });

@@ -19,11 +19,17 @@ import type { UserRole } from "@/lib/auth/role";
 export const STRUCTURAL_BLIND_SPOTS: string[] = [
   // Nuancé le 2026-08-06 : delai_1er_contact_heures existe depuis le 2026-07-14 (colonne "Délai
   // moyen 1er contact", voir Réseaux Logistiques / lib/providerKpi.ts) — ce n'est plus un vrai
-  // trou de donnée pour les réseaux COD, mais reste une APPROXIMATION biaisée : calculée
-  // uniquement sur les commandes réglées en 0 ou 1 tentative d'appel ratée (les réseaux ne
-  // gardent pas l'historique complet des tentatives, juste un compteur + la date de la dernière),
-  // donc probablement optimiste. Toujours totalement absent côté CRM Voralis (affiliés).
-  "Délai avant le 1er contact commercial : disponible en approximation pour les réseaux COD (colonne \"Délai moyen 1er contact\"), mais uniquement fiable sur les commandes réglées en 0 ou 1 tentative d'appel ratée — probablement optimiste. Toujours un angle mort total côté CRM Voralis (affiliés).",
+  // trou de donnée pour les réseaux COD. Reste une APPROXIMATION biaisée en interne (calculée
+  // uniquement sur les commandes réglées en 0 ou 1 tentative d'appel ratée, donc probablement
+  // optimiste — voir GapNote dans components/kpi/ProviderKpiTable.tsx pour le détail technique),
+  // mais ce niveau de détail est volontairement omis du message affiché au Copilot IA depuis le
+  // 2026-08-06 (demande CEO : trop long/technique pour une carte d'info) — seul le fait "dispo COD,
+  // absent affiliés" est gardé. Toujours totalement absent côté CRM Voralis (affiliés) — et ce
+  // n'est pas un simple trou technique côté CRM Voralis : les agents call center ne travaillent
+  // jamais dans CRM Voralis pour la relance/confirmation, ils utilisent directement les
+  // applications des partenaires logistiques (COD) — CRM Voralis ne pourra donc jamais capter ce
+  // délai, même pour les commandes affiliées (confirmé CEO, 2026-08-06).
+  "Délai avant le 1er contact commercial : disponible en approximation uniquement via les applications des partenaires logistiques (colonne \"Délai moyen 1er contact\", Réseaux Logistiques).",
   "Motifs d'annulation et de retour : aucun réseau ne catégorise ces motifs — seuls les comptages bruts (annulées, retournées) sont disponibles.",
 ];
 
