@@ -4,7 +4,7 @@ import Topbar from "@/components/layout/Topbar";
 import { Section } from "@/components/ui";
 import { useFilters } from "@/lib/filters";
 import { fetchAffiliatesData, type AffiliateRow } from "@/lib/affiliates";
-import { AlertTriangle, Loader2, Trophy } from "lucide-react";
+import { AlertTriangle, Loader2, Lock, Trophy } from "lucide-react";
 import {
   ResponsiveContainer,
   LineChart,
@@ -28,7 +28,7 @@ interface DailyPoint {
   date: string;
   caLivreUsd: number;
   livres: number;
-  margeSimplifieeUsd: number;
+  margeReelleUsd: number | null;
 }
 
 interface CountryPoint {
@@ -40,6 +40,7 @@ interface CountryPoint {
 interface TimeseriesData {
   daily: DailyPoint[];
   byCountry: CountryPoint[];
+  role: "ceo" | "team" | null;
 }
 
 function fmtUsd(value: number): string {
@@ -160,16 +161,23 @@ export default function DashboardOverviewPage() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Marge simplifiée (USD)" color={COLOR_MARGE}>
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={ts.daily} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="0" stroke="#e1e0d9" vertical={false} />
-                <XAxis dataKey="date" tickFormatter={fmtDateShort} tick={{ fontSize: 10, fill: "#898781" }} axisLine={{ stroke: "#c3c2b7" }} tickLine={false} minTickGap={24} />
-                <YAxis tick={{ fontSize: 10, fill: "#898781" }} axisLine={false} tickLine={false} tickFormatter={(v) => fmtUsd(v)} width={56} />
-                <Tooltip formatter={(v) => fmtUsd(Number(v))} contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e1e0d9" }} />
-                <Line type="monotone" dataKey="margeSimplifieeUsd" stroke={COLOR_MARGE} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
-              </LineChart>
-            </ResponsiveContainer>
+          <ChartCard title="Marge nette réelle (USD)" color={COLOR_MARGE}>
+            {ts.role === "ceo" ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={ts.daily} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="0" stroke="#e1e0d9" vertical={false} />
+                  <XAxis dataKey="date" tickFormatter={fmtDateShort} tick={{ fontSize: 10, fill: "#898781" }} axisLine={{ stroke: "#c3c2b7" }} tickLine={false} minTickGap={24} />
+                  <YAxis tick={{ fontSize: 10, fill: "#898781" }} axisLine={false} tickLine={false} tickFormatter={(v) => fmtUsd(v)} width={56} />
+                  <Tooltip formatter={(v) => (v == null ? "—" : fmtUsd(Number(v)))} contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e1e0d9" }} />
+                  <Line type="monotone" dataKey="margeReelleUsd" stroke={COLOR_MARGE} strokeWidth={2} dot={false} activeDot={{ r: 4 }} connectNulls={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full flex flex-col items-center justify-center gap-2 text-center px-4">
+                <Lock size={16} className="text-slate-400" />
+                <span className="text-[11px] text-slate-400">Marge nette réelle réservée au rôle CEO</span>
+              </div>
+            )}
           </ChartCard>
 
           <ChartCard title="Commandes livrées" color={COLOR_LIVRES}>
@@ -185,9 +193,10 @@ export default function DashboardOverviewPage() {
           </ChartCard>
         </div>
         <p className="text-[11px] text-slate-400 -mt-3">
-          Marge simplifiée = CA livré encaissé − dépense pub Meta Ads uniquement (hors COGS et payout affiliés,
-          hors coût réel Field Cash Angola) — vue d&apos;ensemble rapide, pas un remplacement du détail précis
-          par pays disponible sur Rentabilité.
+          Marge nette réelle = CA livré − ad spend − payout affiliés (réel du jour, CRM Voralis) − COGS (quantité
+          expédiée du jour), sommée en USD tous pays confondus pour cette vue d&apos;ensemble — le détail précis
+          par pays, en devise locale, reste sur Rentabilité. Un trou dans la courbe = jour où le CRM Voralis
+          était injoignable (jamais remplacé par un 0 qui fausserait la marge affichée).
         </p>
 
         {/* ═══ Comparaison par pays ═══ */}

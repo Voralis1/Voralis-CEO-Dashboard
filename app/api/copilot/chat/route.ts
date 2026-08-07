@@ -13,10 +13,10 @@ import { computeBottleneckAnalysis } from "@/lib/copilot/bottleneck";
 //      utilisateur demande (cohérent avec le module Seuils, Prompt 6).
 //
 // LLM servi via OpenRouter (2026-07-08) — endpoint compatible OpenAI, pas l'API Anthropic
-// native. Modèle : deepseek/deepseek-v4-flash (slug confirmé sur l'API publique OpenRouter).
+// native. Modèle : moonshotai/kimi-k3 (même slug que le workflow n8n shipsen-dashboard-ai-sync).
 // Conséquence : pas de "thinking" natif ni de cache_control (spécifiques à l'API Anthropic) —
 // juste un tableau messages plat, format OpenAI.
-const OPENROUTER_MODEL = "deepseek/deepseek-v4-flash";
+const OPENROUTER_MODEL = "moonshotai/kimi-k3";
 
 const client = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
